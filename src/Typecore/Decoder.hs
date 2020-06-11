@@ -1,2 +1,2 @@
- module Typecore.Decoder where
-     
+module Typecore.Decoder where
+import RISCV

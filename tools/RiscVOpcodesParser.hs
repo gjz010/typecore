@@ -2,13 +2,11 @@
 module RiscVOpcodesParser where
     import Prelude
     import Text.RawString.QQ
-    import Text.Parsec
-    import qualified Data.Map.Lazy as M
     import Data.List
     import Data.Maybe
     import Data.List.Split
-    bitfields :: M.Map String (Int, Int)
-    bitfields = M.fromList [("rd",(11,7)),
+    bitfields :: [(String, (Int, Int))]
+    bitfields = [("rd",(11,7)),
                 ("rs1",(19,15)),
                 ("rs2",(24,20)),
                 ("rs3",(31,27)),
@@ -31,8 +29,8 @@ module RiscVOpcodesParser where
     fieldExtractor (field, (hi, lo)) = "get_"++field++" :: (BitPack a, BitSize a ~ 32)=>a->BitVector "++(show $ hi+1-lo)
                                         ++"\nget_"++field++" = slice d"++(show hi)++" d"++(show lo)
     
-    causes :: M.Map Int String
-    causes = M.fromList [(0x00, "MisalignedFetch"),
+    causes :: [(Int,String)]
+    causes = [(0x00, "MisalignedFetch"),
                         (0x01, "FetchAccess"),
                         (0x02, "IllegalInstruction"),
                         (0x03, "BreakPoint"),
@@ -55,7 +53,7 @@ module RiscVOpcodesParser where
             fin = "cause _ = UnknownCause"
     header :: String
     header =[r|-- This file is generated automatically.
-{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE AllowAmbiguousTypes, NamedFieldPuns #-}
 module RISCV where
 import Clash.Prelude
 type RegIndex = BitVector 5
@@ -112,6 +110,25 @@ parseR4 i = R4 {rs1=get_rs1 i, rs2=get_rs2 i, rs3=get_rs3 i, rd=get_rd i, rm=get
 parseFc :: BitVector 32->InstructionParam
 parseFc i = Fc {RISCV.pred=get_pred i, RISCV.succ=get_succ i}
 
+data FlattenedInstructionParam = FlattenedInstructionParam {f_rs1 :: RegIndex, f_rs2 :: RegIndex, f_rs3 :: RegIndex, f_rd :: RegIndex,
+                                                    f_imm :: Immediate, f_rm :: RoundMode, f_shamt :: Shamt, f_pred :: FenceArg, f_succ :: FenceArg, f_aq :: Bit, f_rl :: Bit} deriving Show
+dontCareParam :: FlattenedInstructionParam
+dontCareParam = FlattenedInstructionParam {f_rs1 = ($$(bLit ".....")), f_rs2 = ($$(bLit ".....")), f_rs3 = ($$(bLit ".....")),
+f_rd = ($$(bLit ".....")), f_imm = ($$(bLit "................................")), f_rm = ($$(bLit "...")), f_shamt = ($$(bLit "......")),
+f_pred = ($$(bLit "....")), f_succ = ($$(bLit "....")), f_aq=($$(bLit ".") :: BitVector 1) !0, f_rl=($$(bLit ".") :: BitVector 1)!0}
+flattenInstructionParam :: InstructionParam->FlattenedInstructionParam 
+flattenInstructionParam R {rs1, rs2, rd}= dontCareParam {f_rs1=rs1, f_rs2=rs2, f_rd=rd}
+flattenInstructionParam I {rs1, imm, rd}= dontCareParam {f_rs1=rs1, f_imm=imm, f_rd=rd}
+flattenInstructionParam S {rs1, rs2, imm}= dontCareParam {f_rs1=rs1, f_rs2=rs2, f_imm=imm}
+flattenInstructionParam B {rs1, rs2, imm}= dontCareParam {f_rs1=rs1, f_rs2=rs2, f_imm=imm}
+flattenInstructionParam U {imm, rd}= dontCareParam {f_imm=imm, f_rd=rd}
+flattenInstructionParam J {imm, rd}= dontCareParam {f_imm=imm, f_rd=rd}
+flattenInstructionParam At {aq, rl, rs1, rs2, rd}= dontCareParam {f_aq=aq, f_rl=rl, f_rs1=rs1, f_rs2=rs2, f_rd=rd}
+flattenInstructionParam Fl {rs1, rs2, rd, rm}= dontCareParam {f_rs1=rs1, f_rs2=rs2, f_rd=rd, f_rm=rm}
+flattenInstructionParam Sh {rs1, rd, shamt}= dontCareParam {f_rs1=rs1, f_rd=rd, f_shamt=shamt}
+flattenInstructionParam R4 {rs1, rs2, rs3, rd, rm}= dontCareParam {f_rs1=rs1, f_rs2=rs2, f_rs3=rs3, f_rd=rd, f_rm=rm}
+flattenInstructionParam Fc {RISCV.pred, RISCV.succ}= dontCareParam {f_pred=pred, f_succ=succ}
+
 class InstructionMatch (s::Symbol) where
     inst :: BitVector 32->Maybe InstructionParam
 |]
@@ -143,7 +160,7 @@ class InstructionMatch (s::Symbol) where
     
 
     riscv :: [[String]]->String
-    riscv opcodes= intercalate "\n" $ [header, causeChecker $ M.toList causes, intercalate "\n" $ map fieldExtractor $ M.toList bitfields] ++ (map matchInsn opcodes)
+    riscv opcodes= intercalate "\n" $ [header, causeChecker causes, intercalate "\n" $ map fieldExtractor bitfields] ++ (map matchInsn opcodes)
     main :: IO ()
     main = do
         input<-getContents

@@ -1,5 +1,5 @@
 -- This file is generated automatically.
-{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE AllowAmbiguousTypes, NamedFieldPuns #-}
 module RISCV where
 import Clash.Prelude
 type RegIndex = BitVector 5
@@ -56,6 +56,25 @@ parseR4 i = R4 {rs1=get_rs1 i, rs2=get_rs2 i, rs3=get_rs3 i, rd=get_rd i, rm=get
 parseFc :: BitVector 32->InstructionParam
 parseFc i = Fc {RISCV.pred=get_pred i, RISCV.succ=get_succ i}
 
+data FlattenedInstructionParam = FlattenedInstructionParam {f_rs1 :: RegIndex, f_rs2 :: RegIndex, f_rs3 :: RegIndex, f_rd :: RegIndex,
+                                                    f_imm :: Immediate, f_rm :: RoundMode, f_shamt :: Shamt, f_pred :: FenceArg, f_succ :: FenceArg, f_aq :: Bit, f_rl :: Bit} deriving Show
+dontCareParam :: FlattenedInstructionParam
+dontCareParam = FlattenedInstructionParam {f_rs1 = ($$(bLit ".....")), f_rs2 = ($$(bLit ".....")), f_rs3 = ($$(bLit ".....")),
+f_rd = ($$(bLit ".....")), f_imm = ($$(bLit "................................")), f_rm = ($$(bLit "...")), f_shamt = ($$(bLit "......")),
+f_pred = ($$(bLit "....")), f_succ = ($$(bLit "....")), f_aq=($$(bLit ".") :: BitVector 1) !0, f_rl=($$(bLit ".") :: BitVector 1)!0}
+flattenInstructionParam :: InstructionParam->FlattenedInstructionParam 
+flattenInstructionParam R {rs1, rs2, rd}= dontCareParam {f_rs1=rs1, f_rs2=rs2, f_rd=rd}
+flattenInstructionParam I {rs1, imm, rd}= dontCareParam {f_rs1=rs1, f_imm=imm, f_rd=rd}
+flattenInstructionParam S {rs1, rs2, imm}= dontCareParam {f_rs1=rs1, f_rs2=rs2, f_imm=imm}
+flattenInstructionParam B {rs1, rs2, imm}= dontCareParam {f_rs1=rs1, f_rs2=rs2, f_imm=imm}
+flattenInstructionParam U {imm, rd}= dontCareParam {f_imm=imm, f_rd=rd}
+flattenInstructionParam J {imm, rd}= dontCareParam {f_imm=imm, f_rd=rd}
+flattenInstructionParam At {aq, rl, rs1, rs2, rd}= dontCareParam {f_aq=aq, f_rl=rl, f_rs1=rs1, f_rs2=rs2, f_rd=rd}
+flattenInstructionParam Fl {rs1, rs2, rd, rm}= dontCareParam {f_rs1=rs1, f_rs2=rs2, f_rd=rd, f_rm=rm}
+flattenInstructionParam Sh {rs1, rd, shamt}= dontCareParam {f_rs1=rs1, f_rd=rd, f_shamt=shamt}
+flattenInstructionParam R4 {rs1, rs2, rs3, rd, rm}= dontCareParam {f_rs1=rs1, f_rs2=rs2, f_rs3=rs3, f_rd=rd, f_rm=rm}
+flattenInstructionParam Fc {RISCV.pred, RISCV.succ}= dontCareParam {f_pred=pred, f_succ=succ}
+
 class InstructionMatch (s::Symbol) where
     inst :: BitVector 32->Maybe InstructionParam
 
@@ -77,44 +96,44 @@ cause 12 = FetchPageFault
 cause 13 = LoadPageFault
 cause 15 = StorePageFault
 cause _ = UnknownCause
-get_aqrl :: (BitPack a, BitSize a ~ 32)=>a->BitVector 2
-get_aqrl = slice d26 d25
-get_bimm12hi :: (BitPack a, BitSize a ~ 32)=>a->BitVector 7
-get_bimm12hi = slice d31 d25
-get_bimm12lo :: (BitPack a, BitSize a ~ 32)=>a->BitVector 5
-get_bimm12lo = slice d11 d7
-get_imm12 :: (BitPack a, BitSize a ~ 32)=>a->BitVector 12
-get_imm12 = slice d31 d20
-get_imm12hi :: (BitPack a, BitSize a ~ 32)=>a->BitVector 7
-get_imm12hi = slice d31 d25
-get_imm12lo :: (BitPack a, BitSize a ~ 32)=>a->BitVector 5
-get_imm12lo = slice d11 d7
-get_imm20 :: (BitPack a, BitSize a ~ 32)=>a->BitVector 20
-get_imm20 = slice d31 d12
-get_jimm20 :: (BitPack a, BitSize a ~ 32)=>a->BitVector 20
-get_jimm20 = slice d31 d12
-get_pred :: (BitPack a, BitSize a ~ 32)=>a->BitVector 4
-get_pred = slice d27 d24
 get_rd :: (BitPack a, BitSize a ~ 32)=>a->BitVector 5
 get_rd = slice d11 d7
-get_rm :: (BitPack a, BitSize a ~ 32)=>a->BitVector 3
-get_rm = slice d14 d12
 get_rs1 :: (BitPack a, BitSize a ~ 32)=>a->BitVector 5
 get_rs1 = slice d19 d15
 get_rs2 :: (BitPack a, BitSize a ~ 32)=>a->BitVector 5
 get_rs2 = slice d24 d20
 get_rs3 :: (BitPack a, BitSize a ~ 32)=>a->BitVector 5
 get_rs3 = slice d31 d27
+get_aqrl :: (BitPack a, BitSize a ~ 32)=>a->BitVector 2
+get_aqrl = slice d26 d25
+get_pred :: (BitPack a, BitSize a ~ 32)=>a->BitVector 4
+get_pred = slice d27 d24
+get_succ :: (BitPack a, BitSize a ~ 32)=>a->BitVector 4
+get_succ = slice d23 d20
+get_rm :: (BitPack a, BitSize a ~ 32)=>a->BitVector 3
+get_rm = slice d14 d12
+get_imm20 :: (BitPack a, BitSize a ~ 32)=>a->BitVector 20
+get_imm20 = slice d31 d12
+get_jimm20 :: (BitPack a, BitSize a ~ 32)=>a->BitVector 20
+get_jimm20 = slice d31 d12
+get_imm12 :: (BitPack a, BitSize a ~ 32)=>a->BitVector 12
+get_imm12 = slice d31 d20
+get_imm12hi :: (BitPack a, BitSize a ~ 32)=>a->BitVector 7
+get_imm12hi = slice d31 d25
+get_bimm12hi :: (BitPack a, BitSize a ~ 32)=>a->BitVector 7
+get_bimm12hi = slice d31 d25
+get_imm12lo :: (BitPack a, BitSize a ~ 32)=>a->BitVector 5
+get_imm12lo = slice d11 d7
+get_bimm12lo :: (BitPack a, BitSize a ~ 32)=>a->BitVector 5
+get_bimm12lo = slice d11 d7
+get_zimm :: (BitPack a, BitSize a ~ 32)=>a->BitVector 5
+get_zimm = slice d19 d15
 get_shamt :: (BitPack a, BitSize a ~ 32)=>a->BitVector 6
 get_shamt = slice d25 d20
 get_shamtw :: (BitPack a, BitSize a ~ 32)=>a->BitVector 5
 get_shamtw = slice d24 d20
-get_succ :: (BitPack a, BitSize a ~ 32)=>a->BitVector 4
-get_succ = slice d23 d20
 get_vseglen :: (BitPack a, BitSize a ~ 32)=>a->BitVector 3
 get_vseglen = slice d31 d29
-get_zimm :: (BitPack a, BitSize a ~ 32)=>a->BitVector 5
-get_zimm = slice d19 d15
 instance InstructionMatch "beq" where inst i = if (slice d14 d12 i==0) && (slice d6 d2 i==0x18) && (slice d1 d0 i==3) then Just $ parseB i else Nothing
 instance InstructionMatch "bne" where inst i = if (slice d14 d12 i==1) && (slice d6 d2 i==0x18) && (slice d1 d0 i==3) then Just $ parseB i else Nothing
 instance InstructionMatch "blt" where inst i = if (slice d14 d12 i==4) && (slice d6 d2 i==0x18) && (slice d1 d0 i==3) then Just $ parseB i else Nothing

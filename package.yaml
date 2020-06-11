@@ -31,6 +31,8 @@ dependencies:
 - raw-strings-qq
 - containers
 - split
+- lens
+- mtl
 build-tools:
 - clash-ghc
 
