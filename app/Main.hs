@@ -1,6 +1,6 @@
 module Main where
-import Lib
+import Typecore
+import qualified Simulation.Main
 import Prelude
 
-main :: IO ()
-main = print "123"
+main = Simulation.Main.main
