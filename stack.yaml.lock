@@ -5,26 +5,54 @@
 
 packages:
 - completed:
-    hackage: clash-ghc-1.0.1@sha256:1542736ef5dbeb811772ab2db057f547c7469ef974e49be40240e848d7d2450a,7744
+    hackage: clash-ghc-1.2.2@sha256:9297454abe61c1b0606de8d63ddaac1c4f71779630e1424e945df4ca0307aad8,8264
     pantry-tree:
-      size: 3026
-      sha256: ff5e9da2c39ed21fc3aae673b810da37b1e685a8bdfd8f77df785f5328bed306
+      size: 3098
+      sha256: a9abe299dc603a1175fa4f1ee702b8a84fe638bc03d4a63569899415837e1d4e
   original:
-    hackage: clash-ghc-1.0.1@sha256:1542736ef5dbeb811772ab2db057f547c7469ef974e49be40240e848d7d2450a,7744
+    hackage: clash-ghc-1.2.2@sha256:9297454abe61c1b0606de8d63ddaac1c4f71779630e1424e945df4ca0307aad8,8264
 - completed:
-    hackage: clash-lib-1.0.1@sha256:d89325c22f7381934fc98c3c177441b2a671be408179e26667b8cf7e601a726b,9219
+    hackage: clash-lib-1.2.2@sha256:92a0edcb033afa05d66539877639921c90c69ac731d2b40621ab62a2473269b7,11229
     pantry-tree:
-      size: 15128
-      sha256: eaa2e4e010ba391271e090253b1a9926c95bd1a0b2da42240d76635f6d5b2988
+      size: 16593
+      sha256: 208aa7d53fc4b4f6992886861258d2378dc0148171cbc87e049c07aee1b2c98d
   original:
-    hackage: clash-lib-1.0.1@sha256:d89325c22f7381934fc98c3c177441b2a671be408179e26667b8cf7e601a726b,9219
+    hackage: clash-lib-1.2.2@sha256:92a0edcb033afa05d66539877639921c90c69ac731d2b40621ab62a2473269b7,11229
 - completed:
-    hackage: clash-prelude-1.0.1@sha256:a1f3e0b959f39b9e620e18fdc7a8647ed91bd888db8d5b52b961e1f9c8fc5739,12526
+    hackage: clash-prelude-1.2.2@sha256:c19fad16038d90ce074793d74fb806b1db758a9aac3afa38780f67244e345594,15174
     pantry-tree:
-      size: 9159
-      sha256: 56e6219588b1e6516861f2b343e9d3a3e375c8d36b664705602afe230a6d53b5
+      size: 10411
+      sha256: e85bc2d0be56d1fc84fec3400565c3abb71a455d10239868de142ae8033cf930
   original:
-    hackage: clash-prelude-1.0.1@sha256:a1f3e0b959f39b9e620e18fdc7a8647ed91bd888db8d5b52b961e1f9c8fc5739,12526
+    hackage: clash-prelude-1.2.2@sha256:c19fad16038d90ce074793d74fb806b1db758a9aac3afa38780f67244e345594,15174
+- completed:
+    hackage: ghc-typelits-extra-0.4@sha256:e1ba4ebf14cb7025dd940380dfb15db444f7e8bced7e30bdad6e1707f0af7622,4813
+    pantry-tree:
+      size: 681
+      sha256: d7fd4b3395e7957556fbab4d971bdec4182dfbdfe4910930184f0d78c69c7341
+  original:
+    hackage: ghc-typelits-extra-0.4@sha256:e1ba4ebf14cb7025dd940380dfb15db444f7e8bced7e30bdad6e1707f0af7622,4813
+- completed:
+    hackage: ghc-typelits-knownnat-0.7.2@sha256:63054c8108f21a4bc5ace477227476b72a4e3792f35f37f2d406eef262ae4346,4711
+    pantry-tree:
+      size: 602
+      sha256: 9267f4f6bcd9cf66db26b223c3da7f4f4a883a07af3d6bf26ae6e2157e237972
+  original:
+    hackage: ghc-typelits-knownnat-0.7.2@sha256:63054c8108f21a4bc5ace477227476b72a4e3792f35f37f2d406eef262ae4346,4711
+- completed:
+    hackage: ghc-typelits-natnormalise-0.7.2@sha256:0fc48a3744aa25e5e53a054a8bb1fe6410752e497f446d75db9bd67bb258d05e,3495
+    pantry-tree:
+      size: 609
+      sha256: 08645cba16a116cba18f2ba0bcc6d1721a3ad77720a0717a9f2caa78c5e8f48b
+  original:
+    hackage: ghc-typelits-natnormalise-0.7.2@sha256:0fc48a3744aa25e5e53a054a8bb1fe6410752e497f446d75db9bd67bb258d05e,3495
+- completed:
+    hackage: ghc-tcplugins-extra-0.4@sha256:4e8303c1bd266bd75ff433896250d0f5242ab96aa94243c30085a585f80081fc,1685
+    pantry-tree:
+      size: 331
+      sha256: 99f4b9c92625e94fdb58cba0400b480833d09e25b45717b8dae05f8869bb680d
+  original:
+    hackage: ghc-tcplugins-extra-0.4@sha256:4e8303c1bd266bd75ff433896250d0f5242ab96aa94243c30085a585f80081fc,1685
 snapshots:
 - completed:
     size: 524155

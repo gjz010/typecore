@@ -70,6 +70,7 @@ ghc-options:
 - -fplugin=GHC.TypeLits.Normalise
 - -fplugin=GHC.TypeLits.Extra.Solver
 - -fplugin=GHC.TypeLits.KnownNat.Solver
+- -fconstraint-solver-iterations=0
 - -Wall
 
 
