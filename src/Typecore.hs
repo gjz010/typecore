@@ -1,4 +1,4 @@
-module Lib where
+module Typecore where
 import Typecore.Utils
 import Clash.Prelude
 someFunc = 1
