@@ -5,6 +5,7 @@ module RiscVOpcodesParser where
     import Data.List
     import Data.Maybe
     import Data.List.Split
+    import Debug.Trace
     bitfields :: [(String, (Int, Int))]
     bitfields = [("rd",(11,7)),
                 ("rs1",(19,15)),
@@ -131,6 +132,9 @@ flattenInstructionParam Fc {RISCV.pred, RISCV.succ}= dontCareParam {f_pred=pred,
 
 class InstructionMatch (s::Symbol) where
     inst :: BitVector 32->Maybe InstructionParam
+
+class InstructionMatch16 (s::Symbol) where
+    inst16 :: BitVector 16->Bool
 |]
 
     data InstructionParamType = R | I | S | B | U | J | At | Fl | Sh | R4 | Fc deriving Show
@@ -150,11 +154,17 @@ class InstructionMatch (s::Symbol) where
         _ -> R
 
     getBitPattern :: [String]->[String]
-    getBitPattern args = mapMaybe (\x->if elem '=' x 
-                                            then let [hi, lo, v]=(let [r,v]=splitOn "=" x in splitOn ".." r ++ [v])
+    getBitPattern args = trace (show args) $ mapMaybe (\x->if elem '=' x 
+                                            then 
+                                                let [hi, lo, v]=if elem '.' x then (let [r,v]=splitOn "=" x in splitOn ".." r ++ [v]) else (let [b,v] = splitOn "=" x in [b,b,v])
                                                     in if v=="ignore" then Nothing else Just ("slice d"++(hi)++" d"++(lo)++" i=="++(v))
                                             else Nothing) (tail args)
+    isRVC :: String->Bool
+    isRVC (isPrefixOf "c."->True)=True
+    isRVC (isPrefixOf "@c."->True)=True
+    isRVC _ = False
     matchInsn :: [String]->String
+    matchInsn args@(isRVC . head -> True) = "instance InstructionMatch16 \""++(head args)++"\" where inst16 i = ("++(intercalate ") && (" $ getBitPattern args)++") "
     matchInsn args = "instance InstructionMatch \""++(head args)++"\" where inst i = if ("++(intercalate ") && (" $ getBitPattern args)++") then Just $ parse"++(show $ checkType args)++" i else Nothing"
     
     
@@ -164,5 +174,5 @@ class InstructionMatch (s::Symbol) where
     main :: IO ()
     main = do
         input<-getContents
-        putStrLn $ riscv $ map words $ filter (\x->head x/='#') $ filter (\x->length x>0) $ lines input
+        putStrLn $ riscv $ map words $ filter (not . null) $ map (fst . span (/='#')) $ filter (\x->length x>0) $ lines input
     

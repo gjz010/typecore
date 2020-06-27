@@ -78,6 +78,9 @@ flattenInstructionParam Fc {RISCV.pred, RISCV.succ}= dontCareParam {f_pred=pred,
 class InstructionMatch (s::Symbol) where
     inst :: BitVector 32->Maybe InstructionParam
 
+class InstructionMatch16 (s::Symbol) where
+    inst16 :: BitVector 16->Bool
+
 data Cause = UnknownCause | MisalignedFetch | FetchAccess | IllegalInstruction | BreakPoint | MisalignedLoad | LoadAccess | MisalignedStore | StoreAccess | UserECall | SupervisorECall | HypervisorECall | MachineECall | FetchPageFault | LoadPageFault | StorePageFault  deriving Show
 cause :: (Num a, Eq a)=>a->Cause
 cause 0 = MisalignedFetch
@@ -332,3 +335,52 @@ instance InstructionMatch "fmadd.q" where inst i = if (slice d26 d25 i==3) && (s
 instance InstructionMatch "fmsub.q" where inst i = if (slice d26 d25 i==3) && (slice d6 d2 i==0x11) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing
 instance InstructionMatch "fnmsub.q" where inst i = if (slice d26 d25 i==3) && (slice d6 d2 i==0x12) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing
 instance InstructionMatch "fnmadd.q" where inst i = if (slice d26 d25 i==3) && (slice d6 d2 i==0x13) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing
+instance InstructionMatch16 "c.addi4spn" where inst16 i = (slice d1 d0 i==0) && (slice d15 d13 i==0) 
+instance InstructionMatch16 "c.fld" where inst16 i = (slice d1 d0 i==0) && (slice d15 d13 i==1) 
+instance InstructionMatch16 "c.lw" where inst16 i = (slice d1 d0 i==0) && (slice d15 d13 i==2) 
+instance InstructionMatch16 "c.flw" where inst16 i = (slice d1 d0 i==0) && (slice d15 d13 i==3) 
+instance InstructionMatch16 "c.fsd" where inst16 i = (slice d1 d0 i==0) && (slice d15 d13 i==5) 
+instance InstructionMatch16 "c.sw" where inst16 i = (slice d1 d0 i==0) && (slice d15 d13 i==6) 
+instance InstructionMatch16 "c.fsw" where inst16 i = (slice d1 d0 i==0) && (slice d15 d13 i==7) 
+instance InstructionMatch16 "c.addi" where inst16 i = (slice d1 d0 i==1) && (slice d15 d13 i==0) 
+instance InstructionMatch16 "c.jal" where inst16 i = (slice d1 d0 i==1) && (slice d15 d13 i==1) 
+instance InstructionMatch16 "c.li" where inst16 i = (slice d1 d0 i==1) && (slice d15 d13 i==2) 
+instance InstructionMatch16 "c.lui" where inst16 i = (slice d1 d0 i==1) && (slice d15 d13 i==3) 
+instance InstructionMatch16 "c.srli" where inst16 i = (slice d1 d0 i==1) && (slice d15 d13 i==4) && (slice d11 d10 i==0) 
+instance InstructionMatch16 "c.srai" where inst16 i = (slice d1 d0 i==1) && (slice d15 d13 i==4) && (slice d11 d10 i==1) 
+instance InstructionMatch16 "c.andi" where inst16 i = (slice d1 d0 i==1) && (slice d15 d13 i==4) && (slice d11 d10 i==2) 
+instance InstructionMatch16 "c.sub" where inst16 i = (slice d1 d0 i==1) && (slice d15 d13 i==4) && (slice d12 d12 i==0) && (slice d11 d10 i==3) && (slice d6 d5 i==0) 
+instance InstructionMatch16 "c.xor" where inst16 i = (slice d1 d0 i==1) && (slice d15 d13 i==4) && (slice d12 d12 i==0) && (slice d11 d10 i==3) && (slice d6 d5 i==1) 
+instance InstructionMatch16 "c.or" where inst16 i = (slice d1 d0 i==1) && (slice d15 d13 i==4) && (slice d12 d12 i==0) && (slice d11 d10 i==3) && (slice d6 d5 i==2) 
+instance InstructionMatch16 "c.and" where inst16 i = (slice d1 d0 i==1) && (slice d15 d13 i==4) && (slice d12 d12 i==0) && (slice d11 d10 i==3) && (slice d6 d5 i==3) 
+instance InstructionMatch16 "c.subw" where inst16 i = (slice d1 d0 i==1) && (slice d15 d13 i==4) && (slice d12 d12 i==1) && (slice d11 d10 i==3) && (slice d6 d5 i==0) 
+instance InstructionMatch16 "c.addw" where inst16 i = (slice d1 d0 i==1) && (slice d15 d13 i==4) && (slice d12 d12 i==1) && (slice d11 d10 i==3) && (slice d6 d5 i==1) 
+instance InstructionMatch16 "c.j" where inst16 i = (slice d1 d0 i==1) && (slice d15 d13 i==5) 
+instance InstructionMatch16 "c.beqz" where inst16 i = (slice d1 d0 i==1) && (slice d15 d13 i==6) 
+instance InstructionMatch16 "c.bnez" where inst16 i = (slice d1 d0 i==1) && (slice d15 d13 i==7) 
+instance InstructionMatch16 "c.slli" where inst16 i = (slice d1 d0 i==2) && (slice d15 d13 i==0) 
+instance InstructionMatch16 "c.fldsp" where inst16 i = (slice d1 d0 i==2) && (slice d15 d13 i==1) 
+instance InstructionMatch16 "c.lwsp" where inst16 i = (slice d1 d0 i==2) && (slice d15 d13 i==2) 
+instance InstructionMatch16 "c.flwsp" where inst16 i = (slice d1 d0 i==2) && (slice d15 d13 i==3) 
+instance InstructionMatch16 "c.mv" where inst16 i = (slice d1 d0 i==2) && (slice d15 d13 i==4) && (slice d12 d12 i==0) 
+instance InstructionMatch16 "c.add" where inst16 i = (slice d1 d0 i==2) && (slice d15 d13 i==4) && (slice d12 d12 i==1) 
+instance InstructionMatch16 "c.fsdsp" where inst16 i = (slice d1 d0 i==2) && (slice d15 d13 i==5) 
+instance InstructionMatch16 "c.swsp" where inst16 i = (slice d1 d0 i==2) && (slice d15 d13 i==6) 
+instance InstructionMatch16 "c.fswsp" where inst16 i = (slice d1 d0 i==2) && (slice d15 d13 i==7) 
+instance InstructionMatch16 "@c.nop" where inst16 i = (slice d1 d0 i==1) && (slice d15 d13 i==0) && (slice d12 d12 i==0) && (slice d11 d7 i==0) && (slice d6 d2 i==0) 
+instance InstructionMatch16 "@c.addi16sp" where inst16 i = (slice d1 d0 i==1) && (slice d15 d13 i==3) && (slice d11 d7 i==2) 
+instance InstructionMatch16 "@c.jr" where inst16 i = (slice d1 d0 i==2) && (slice d15 d13 i==4) && (slice d12 d12 i==0) && (slice d6 d2 i==0) 
+instance InstructionMatch16 "@c.jalr" where inst16 i = (slice d1 d0 i==2) && (slice d15 d13 i==4) && (slice d12 d12 i==1) && (slice d6 d2 i==0) 
+instance InstructionMatch16 "@c.ebreak" where inst16 i = (slice d1 d0 i==2) && (slice d15 d13 i==4) && (slice d12 d12 i==1) && (slice d11 d7 i==0) && (slice d6 d2 i==0) 
+instance InstructionMatch16 "@c.srli.rv32" where inst16 i = (slice d1 d0 i==1) && (slice d15 d13 i==4) && (slice d12 d12 i==0) && (slice d11 d10 i==0) 
+instance InstructionMatch16 "@c.srai.rv32" where inst16 i = (slice d1 d0 i==1) && (slice d15 d13 i==4) && (slice d12 d12 i==0) && (slice d11 d10 i==1) 
+instance InstructionMatch16 "@c.slli.rv32" where inst16 i = (slice d1 d0 i==2) && (slice d15 d13 i==0) && (slice d12 d12 i==0) 
+instance InstructionMatch16 "@c.ld" where inst16 i = (slice d1 d0 i==0) && (slice d15 d13 i==3) 
+instance InstructionMatch16 "@c.sd" where inst16 i = (slice d1 d0 i==0) && (slice d15 d13 i==7) 
+instance InstructionMatch16 "@c.addiw" where inst16 i = (slice d1 d0 i==1) && (slice d15 d13 i==1) 
+instance InstructionMatch16 "@c.ldsp" where inst16 i = (slice d1 d0 i==2) && (slice d15 d13 i==3) 
+instance InstructionMatch16 "@c.sdsp" where inst16 i = (slice d1 d0 i==2) && (slice d15 d13 i==7) 
+instance InstructionMatch16 "@c.lq" where inst16 i = (slice d1 d0 i==0) && (slice d15 d13 i==1) 
+instance InstructionMatch16 "@c.sq" where inst16 i = (slice d1 d0 i==0) && (slice d15 d13 i==5) 
+instance InstructionMatch16 "@c.lqsp" where inst16 i = (slice d1 d0 i==2) && (slice d15 d13 i==1) 
+instance InstructionMatch16 "@c.sqsp" where inst16 i = (slice d1 d0 i==2) && (slice d15 d13 i==5) 
