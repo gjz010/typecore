@@ -27,9 +27,11 @@ module RiscVOpcodesParser where
                 ("shamtw",(24,20)),
                 ("vseglen",(31,29))]
     fieldExtractor :: (String, (Int, Int))->String
-    fieldExtractor (field, (hi, lo)) = "get_"++field++" :: (BitPack a, BitSize a ~ 32)=>a->BitVector "++(show $ hi+1-lo)
+    fieldExtractor (field, (hi, lo)) =  "lens_"++field++" :: (BitPack a, BitSize a ~ 32) => Lens' a (BitVector "++(show $ hi+1-lo)++")\n"
+                                        ++ "lens_"++field++" = lens (slice d"++(show hi)++" d"++(show lo)++") (flip (setSlice d"++(show hi)++" d"++(show lo)++"))\n" 
                                         ++"\nget_"++field++" = slice d"++(show hi)++" d"++(show lo)
-    
+                                        ++"\nset_"++field++" :: (BitPack a, BitSize a ~ 32)=>BitVector "++(show $ hi+1-lo)++"->a->a"
+                                        ++"\nset_"++field++" = setSlice d"++(show hi)++" d"++(show lo)
     causes :: [(Int,String)]
     causes = [(0x00, "MisalignedFetch"),
                         (0x01, "FetchAccess"),
@@ -54,9 +56,10 @@ module RiscVOpcodesParser where
             fin = "cause _ = UnknownCause"
     header :: String
     header =[r|-- This file is generated automatically.
-{-# LANGUAGE AllowAmbiguousTypes, NamedFieldPuns #-}
+{-# LANGUAGE AllowAmbiguousTypes, NamedFieldPuns, RankNTypes #-}
 module RISCV where
 import Clash.Prelude
+import Control.Lens
 type RegIndex = BitVector 5
 type Immediate = BitVector 32
 type Shamt = BitVector 6
@@ -75,18 +78,62 @@ data InstructionParam = R {rs1 :: RegIndex, rs2 :: RegIndex, rd :: RegIndex}
                     |   Fc {pred :: FenceArg, succ :: FenceArg}
                     deriving Show
 
+
+
+sliceLens a b = lens (slice a b) (flip (setSlice a b))
+
+lens_aq_rl :: (BitPack a, BitSize a ~ 32)=>Lens' a (Bit, Bit)
+lens_aq_rl = lens_aqrl . (iso (\x->(x!1,x!0)) (\(a,b)->(pack a) ++# (pack b)))
+
+(++##) :: (KnownNat a, KnownNat b)=>Lens' (BitVector s) (BitVector a)->Lens' (BitVector s) (BitVector b)->Lens' (BitVector s) (BitVector (a+b))
+(++##) a b = lens (\x->(view a x) ++# (view b x)) (\s v -> let (v1, v2)=splitAtI $ bv2v v in (set a (v2bv v1) (set b (v2bv v2) s)))
+
+lens_imm_i :: Lens' (BitVector 32) (BitVector 12)
+lens_imm_i = (sliceLens d31 d31 ++## sliceLens d30 d25 ++## sliceLens d24 d21 ++## sliceLens d20 d20)
+lens_imm_s :: Lens' (BitVector 32) (BitVector 12)
+lens_imm_s = (sliceLens d31 d31 ++## sliceLens d30 d25 ++## sliceLens d11 d8 ++## sliceLens d7 d7)
+lens_imm_b :: Lens' (BitVector 32) (BitVector 12)
+lens_imm_b = (sliceLens d31 d31 ++## sliceLens d7 d7 ++## sliceLens d30 d25 ++## sliceLens d11 d8)
+lens_imm_u :: Lens' (BitVector 32) (BitVector 20)
+lens_imm_u = (sliceLens d31 d31 ++## sliceLens d30 d20 ++## sliceLens d19 d12)
+lens_imm_j :: Lens' (BitVector 32) (BitVector 20)
+lens_imm_j = (sliceLens d31 d31 ++## sliceLens d19 d12 ++## sliceLens d20 d20 ++## sliceLens d30 d25 ++## sliceLens d24 d21)
+
+
+
 parse_aqrl :: BitVector 32->(Bit, Bit)
-parse_aqrl i = let aqrl=get_aqrl i in (aqrl!1, aqrl!0)
+parse_aqrl = view lens_aq_rl
 parse_imm_i :: BitVector 32->Immediate
-parse_imm_i i = signExtend @_ @12 @20 (slice d31 d31 i ++# slice d30 d25 i ++# slice d24 d21 i ++# slice d20 d20 i)
+parse_imm_i i = signExtend @_ @12 @20 (view lens_imm_i i)
 parse_imm_s :: BitVector 32->Immediate
-parse_imm_s i = signExtend @_ @12 @20 (slice d31 d31 i ++# slice d30 d25 i ++# slice d11 d8 i ++# slice d7 d7 i)
+parse_imm_s i = signExtend @_ @12 @20 (view lens_imm_s i)
 parse_imm_b :: BitVector 32->Immediate
-parse_imm_b i = signExtend @_ @13 @19 (slice d31 d31 i ++# slice d7 d7 i ++# slice d30 d25 i ++# slice d11 d8 i ++# (0 :: BitVector 1))
+parse_imm_b i = signExtend @_ @13 @19 (view lens_imm_b i ++# (0 :: BitVector 1))
 parse_imm_u :: BitVector 32->Immediate
-parse_imm_u i = (slice d31 d31 i ++# slice d30 d20 i ++# slice d19 d12 i ++# (0 :: BitVector 12))
+parse_imm_u i = (view lens_imm_u i ++# (0 :: BitVector 12))
 parse_imm_j :: BitVector 32->Immediate
-parse_imm_j i = signExtend @_ @21 @11 (slice d31 d31 i ++# slice d19 d12 i ++# slice d20 d20 i ++# slice d30 d25 i ++# slice d24 d21 i ++# (0 :: BitVector 1))
+parse_imm_j i = signExtend @_ @21 @11 (view lens_imm_j i ++# (0 :: BitVector 1))
+
+truncateLSB :: (KnownNat a, KnownNat b) => SNat b->BitVector (a+b)->BitVector a
+truncateLSB _ = v2bv . fst . splitAtI . bv2v
+
+truncate_imm_i :: Immediate->BitVector 12
+truncate_imm_i=truncateB
+truncate_imm_s :: Immediate->BitVector 12
+truncate_imm_s=truncateB
+truncate_imm_b :: Immediate->BitVector 12
+truncate_imm_b=truncateB . (truncateLSB d1) 
+truncate_imm_u :: Immediate->BitVector 20
+truncate_imm_u=(truncateLSB d12)
+truncate_imm_j :: Immediate->BitVector 20
+truncate_imm_j=truncateB . (truncateLSB d1)
+
+
+set_imm_i = (set lens_imm_i) . truncate_imm_i
+set_imm_s = (set lens_imm_s) . truncate_imm_s
+set_imm_b = (set lens_imm_b) . truncate_imm_b
+set_imm_u = (set lens_imm_u) . truncate_imm_u
+set_imm_j = (set lens_imm_j) . truncate_imm_j
 
 parseR :: BitVector 32->InstructionParam
 parseR i = R {rs1=get_rs1 i, rs2=get_rs2 i, rd=get_rd i}
@@ -99,7 +146,7 @@ parseB i = B {rs1=get_rs1 i, rs2=get_rs2 i, imm=parse_imm_b i}
 parseU :: BitVector 32->InstructionParam
 parseU i = U {imm=parse_imm_u i, rd=get_rd i}
 parseJ :: BitVector 32->InstructionParam
-parseJ i = J {imm=parse_imm_u i, rd=get_rd i}
+parseJ i = J {imm=parse_imm_j i, rd=get_rd i}
 parseAt :: BitVector 32->InstructionParam
 parseAt i = let (vaq, vrl)=parse_aqrl i in At {rs1=get_rs1 i, rs2=get_rs2 i, rd=get_rd i, aq=vaq, rl=vrl}
 parseFl :: BitVector 32->InstructionParam
@@ -110,6 +157,21 @@ parseR4 :: BitVector 32->InstructionParam
 parseR4 i = R4 {rs1=get_rs1 i, rs2=get_rs2 i, rs3=get_rs3 i, rd=get_rd i, rm=get_rm i}
 parseFc :: BitVector 32->InstructionParam
 parseFc i = Fc {RISCV.pred=get_pred i, RISCV.succ=get_succ i}
+
+placeFields :: InstructionParam->BitVector 32->BitVector 32
+placeFields (R rs1 rs2 rd) = (set_rs1 rs1) . (set_rs2 rs2) . (set_rd rd)
+placeFields (I rs1 imm rd) = (set_rs1 rs1) . (set_imm_i imm) . (set_rd rd)
+placeFields (S rs1 rs2 imm) = (set_rs1 rs1) . (set_rs2 rs2) . (set_imm_s imm)
+placeFields (B rs1 rs2 imm) = (set_rs1 rs1) . (set_rs2 rs2) . (set_imm_b imm)
+placeFields (U imm rd) = (set_imm_u imm) . (set_rd rd)
+placeFields (J imm rd) = (set_imm_j imm) . (set_rd rd)
+placeFields (At aq rl rs1 rs2 rd) = (set_rs1 rs1) . (set_rs2 rs2) . (set_rd rd) . (set lens_aq_rl (aq, rl))
+placeFields (Fl rs1 rs2 rd rm) = (set_rs1 rs1) . (set_rs2 rs2) . (set_rd rd) . (set_rm rm)
+placeFields (Sh rs1 rd shamt) = (set_rs1 rs1) . (set_rd rd) . (set_shamt shamt)
+placeFields (R4 rs1 rs2 rs3 rd rm) = (set_rs1 rs1) . (set_rs2 rs2) . (set_rs3 rs3) . (set_rd rd). (set_rm rm)
+placeFields (Fc pred succ) = (set_pred pred) . (set_succ succ)
+
+-- setR :: InstructionParam->BitVector 32->BitVector 32
 
 data FlattenedInstructionParam = FlattenedInstructionParam {f_rs1 :: RegIndex, f_rs2 :: RegIndex, f_rs3 :: RegIndex, f_rd :: RegIndex,
                                                     f_imm :: Immediate, f_rm :: RoundMode, f_shamt :: Shamt, f_pred :: FenceArg, f_succ :: FenceArg, f_aq :: Bit, f_rl :: Bit} deriving Show
@@ -132,6 +194,7 @@ flattenInstructionParam Fc {RISCV.pred, RISCV.succ}= dontCareParam {f_pred=pred,
 
 class InstructionMatch (s::Symbol) where
     inst :: BitVector 32->Maybe InstructionParam
+    encodeInst :: InstructionParam->BitVector 32
 
 class InstructionMatch16 (s::Symbol) where
     inst16 :: BitVector 16->Bool
@@ -159,14 +222,21 @@ class InstructionMatch16 (s::Symbol) where
                                                 let [hi, lo, v]=if elem '.' x then (let [r,v]=splitOn "=" x in splitOn ".." r ++ [v]) else (let [b,v] = splitOn "=" x in [b,b,v])
                                                     in if v=="ignore" then Nothing else Just ("slice d"++(hi)++" d"++(lo)++" i=="++(v))
                                             else Nothing) (tail args)
+    getBitSetter :: [String]->[String]
+    getBitSetter args = trace (show args) $ mapMaybe (\x->if elem '=' x 
+                                            then 
+                                                let [hi, lo, v]=if elem '.' x then (let [r,v]=splitOn "=" x in splitOn ".." r ++ [v]) else (let [b,v] = splitOn "=" x in [b,b,v])
+                                                    in if v=="ignore" then Nothing else Just ("setSlice d"++(hi)++" d"++(lo)++" "++(v)++"")
+                                            else Nothing) (tail args)                                           
     isRVC :: String->Bool
     isRVC (isPrefixOf "c."->True)=True
     isRVC (isPrefixOf "@c."->True)=True
     isRVC _ = False
     matchInsn :: [String]->String
     matchInsn args@(isRVC . head -> True) = "instance InstructionMatch16 \""++(head args)++"\" where inst16 i = ("++(intercalate ") && (" $ getBitPattern args)++") "
-    matchInsn args = "instance InstructionMatch \""++(head args)++"\" where inst i = if ("++(intercalate ") && (" $ getBitPattern args)++") then Just $ parse"++(show $ checkType args)++" i else Nothing"
-    
+    matchInsn args = "instance InstructionMatch \""++(head args)++"\" where inst i = if ("++(intercalate ") && (" $ getBitPattern args)++") then Just $ parse"++(show $ checkType args)++" i else Nothing;"
+                    ++ ("encodeInst f = ((placeFields f) . (" ++(intercalate ") . (" $ getBitSetter args) ++")) 0")
+                    
     
 
     riscv :: [[String]]->String

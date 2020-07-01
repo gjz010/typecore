@@ -18,5 +18,6 @@ decodeInstruction (checkType->UnknownType) = BadInstruction
 
 -- The core method for expanding instructions.
 expandInstruction :: BitVector 16 -> Maybe (BitVector 32)
-expandInstruction (inst16 @"@c.nop"->True) =undefined
+--expandInstruction (inst16 @"c.lwsp"->True) = 
+--expandInstruction (inst16 @"@c.nop"->True) =undefined
 expandInstruction _ = Nothing

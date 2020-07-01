@@ -1,7 +1,8 @@
 -- This file is generated automatically.
-{-# LANGUAGE AllowAmbiguousTypes, NamedFieldPuns #-}
+{-# LANGUAGE AllowAmbiguousTypes, NamedFieldPuns, RankNTypes #-}
 module RISCV where
 import Clash.Prelude
+import Control.Lens
 type RegIndex = BitVector 5
 type Immediate = BitVector 32
 type Shamt = BitVector 6
@@ -20,18 +21,62 @@ data InstructionParam = R {rs1 :: RegIndex, rs2 :: RegIndex, rd :: RegIndex}
                     |   Fc {pred :: FenceArg, succ :: FenceArg}
                     deriving Show
 
+
+
+sliceLens a b = lens (slice a b) (flip (setSlice a b))
+
+lens_aq_rl :: (BitPack a, BitSize a ~ 32)=>Lens' a (Bit, Bit)
+lens_aq_rl = lens_aqrl . (iso (\x->(x!1,x!0)) (\(a,b)->(pack a) ++# (pack b)))
+
+(++##) :: (KnownNat a, KnownNat b)=>Lens' (BitVector s) (BitVector a)->Lens' (BitVector s) (BitVector b)->Lens' (BitVector s) (BitVector (a+b))
+(++##) a b = lens (\x->(view a x) ++# (view b x)) (\s v -> let (v1, v2)=splitAtI $ bv2v v in (set a (v2bv v1) (set b (v2bv v2) s)))
+
+lens_imm_i :: Lens' (BitVector 32) (BitVector 12)
+lens_imm_i = (sliceLens d31 d31 ++## sliceLens d30 d25 ++## sliceLens d24 d21 ++## sliceLens d20 d20)
+lens_imm_s :: Lens' (BitVector 32) (BitVector 12)
+lens_imm_s = (sliceLens d31 d31 ++## sliceLens d30 d25 ++## sliceLens d11 d8 ++## sliceLens d7 d7)
+lens_imm_b :: Lens' (BitVector 32) (BitVector 12)
+lens_imm_b = (sliceLens d31 d31 ++## sliceLens d7 d7 ++## sliceLens d30 d25 ++## sliceLens d11 d8)
+lens_imm_u :: Lens' (BitVector 32) (BitVector 20)
+lens_imm_u = (sliceLens d31 d31 ++## sliceLens d30 d20 ++## sliceLens d19 d12)
+lens_imm_j :: Lens' (BitVector 32) (BitVector 20)
+lens_imm_j = (sliceLens d31 d31 ++## sliceLens d19 d12 ++## sliceLens d20 d20 ++## sliceLens d30 d25 ++## sliceLens d24 d21)
+
+
+
 parse_aqrl :: BitVector 32->(Bit, Bit)
-parse_aqrl i = let aqrl=get_aqrl i in (aqrl!1, aqrl!0)
+parse_aqrl = view lens_aq_rl
 parse_imm_i :: BitVector 32->Immediate
-parse_imm_i i = signExtend @_ @12 @20 (slice d31 d31 i ++# slice d30 d25 i ++# slice d24 d21 i ++# slice d20 d20 i)
+parse_imm_i i = signExtend @_ @12 @20 (view lens_imm_i i)
 parse_imm_s :: BitVector 32->Immediate
-parse_imm_s i = signExtend @_ @12 @20 (slice d31 d31 i ++# slice d30 d25 i ++# slice d11 d8 i ++# slice d7 d7 i)
+parse_imm_s i = signExtend @_ @12 @20 (view lens_imm_s i)
 parse_imm_b :: BitVector 32->Immediate
-parse_imm_b i = signExtend @_ @13 @19 (slice d31 d31 i ++# slice d7 d7 i ++# slice d30 d25 i ++# slice d11 d8 i ++# (0 :: BitVector 1))
+parse_imm_b i = signExtend @_ @13 @19 (view lens_imm_b i ++# (0 :: BitVector 1))
 parse_imm_u :: BitVector 32->Immediate
-parse_imm_u i = (slice d31 d31 i ++# slice d30 d20 i ++# slice d19 d12 i ++# (0 :: BitVector 12))
+parse_imm_u i = (view lens_imm_u i ++# (0 :: BitVector 12))
 parse_imm_j :: BitVector 32->Immediate
-parse_imm_j i = signExtend @_ @21 @11 (slice d31 d31 i ++# slice d19 d12 i ++# slice d20 d20 i ++# slice d30 d25 i ++# slice d24 d21 i ++# (0 :: BitVector 1))
+parse_imm_j i = signExtend @_ @21 @11 (view lens_imm_j i ++# (0 :: BitVector 1))
+
+truncateLSB :: (KnownNat a, KnownNat b) => SNat b->BitVector (a+b)->BitVector a
+truncateLSB _ = v2bv . fst . splitAtI . bv2v
+
+truncate_imm_i :: Immediate->BitVector 12
+truncate_imm_i=truncateB
+truncate_imm_s :: Immediate->BitVector 12
+truncate_imm_s=truncateB
+truncate_imm_b :: Immediate->BitVector 12
+truncate_imm_b=truncateB . (truncateLSB d1) 
+truncate_imm_u :: Immediate->BitVector 20
+truncate_imm_u=(truncateLSB d12)
+truncate_imm_j :: Immediate->BitVector 20
+truncate_imm_j=truncateB . (truncateLSB d1)
+
+
+set_imm_i = (set lens_imm_i) . truncate_imm_i
+set_imm_s = (set lens_imm_s) . truncate_imm_s
+set_imm_b = (set lens_imm_b) . truncate_imm_b
+set_imm_u = (set lens_imm_u) . truncate_imm_u
+set_imm_j = (set lens_imm_j) . truncate_imm_j
 
 parseR :: BitVector 32->InstructionParam
 parseR i = R {rs1=get_rs1 i, rs2=get_rs2 i, rd=get_rd i}
@@ -44,7 +89,7 @@ parseB i = B {rs1=get_rs1 i, rs2=get_rs2 i, imm=parse_imm_b i}
 parseU :: BitVector 32->InstructionParam
 parseU i = U {imm=parse_imm_u i, rd=get_rd i}
 parseJ :: BitVector 32->InstructionParam
-parseJ i = J {imm=parse_imm_u i, rd=get_rd i}
+parseJ i = J {imm=parse_imm_j i, rd=get_rd i}
 parseAt :: BitVector 32->InstructionParam
 parseAt i = let (vaq, vrl)=parse_aqrl i in At {rs1=get_rs1 i, rs2=get_rs2 i, rd=get_rd i, aq=vaq, rl=vrl}
 parseFl :: BitVector 32->InstructionParam
@@ -55,6 +100,21 @@ parseR4 :: BitVector 32->InstructionParam
 parseR4 i = R4 {rs1=get_rs1 i, rs2=get_rs2 i, rs3=get_rs3 i, rd=get_rd i, rm=get_rm i}
 parseFc :: BitVector 32->InstructionParam
 parseFc i = Fc {RISCV.pred=get_pred i, RISCV.succ=get_succ i}
+
+placeFields :: InstructionParam->BitVector 32->BitVector 32
+placeFields (R rs1 rs2 rd) = (set_rs1 rs1) . (set_rs2 rs2) . (set_rd rd)
+placeFields (I rs1 imm rd) = (set_rs1 rs1) . (set_imm_i imm) . (set_rd rd)
+placeFields (S rs1 rs2 imm) = (set_rs1 rs1) . (set_rs2 rs2) . (set_imm_s imm)
+placeFields (B rs1 rs2 imm) = (set_rs1 rs1) . (set_rs2 rs2) . (set_imm_b imm)
+placeFields (U imm rd) = (set_imm_u imm) . (set_rd rd)
+placeFields (J imm rd) = (set_imm_j imm) . (set_rd rd)
+placeFields (At aq rl rs1 rs2 rd) = (set_rs1 rs1) . (set_rs2 rs2) . (set_rd rd) . (set lens_aq_rl (aq, rl))
+placeFields (Fl rs1 rs2 rd rm) = (set_rs1 rs1) . (set_rs2 rs2) . (set_rd rd) . (set_rm rm)
+placeFields (Sh rs1 rd shamt) = (set_rs1 rs1) . (set_rd rd) . (set_shamt shamt)
+placeFields (R4 rs1 rs2 rs3 rd rm) = (set_rs1 rs1) . (set_rs2 rs2) . (set_rs3 rs3) . (set_rd rd). (set_rm rm)
+placeFields (Fc pred succ) = (set_pred pred) . (set_succ succ)
+
+-- setR :: InstructionParam->BitVector 32->BitVector 32
 
 data FlattenedInstructionParam = FlattenedInstructionParam {f_rs1 :: RegIndex, f_rs2 :: RegIndex, f_rs3 :: RegIndex, f_rd :: RegIndex,
                                                     f_imm :: Immediate, f_rm :: RoundMode, f_shamt :: Shamt, f_pred :: FenceArg, f_succ :: FenceArg, f_aq :: Bit, f_rl :: Bit} deriving Show
@@ -77,6 +137,7 @@ flattenInstructionParam Fc {RISCV.pred, RISCV.succ}= dontCareParam {f_pred=pred,
 
 class InstructionMatch (s::Symbol) where
     inst :: BitVector 32->Maybe InstructionParam
+    encodeInst :: InstructionParam->BitVector 32
 
 class InstructionMatch16 (s::Symbol) where
     inst16 :: BitVector 16->Bool
@@ -99,242 +160,318 @@ cause 12 = FetchPageFault
 cause 13 = LoadPageFault
 cause 15 = StorePageFault
 cause _ = UnknownCause
-get_rd :: (BitPack a, BitSize a ~ 32)=>a->BitVector 5
+lens_rd :: (BitPack a, BitSize a ~ 32) => Lens' a (BitVector 5)
+lens_rd = lens (slice d11 d7) (flip (setSlice d11 d7))
+
 get_rd = slice d11 d7
-get_rs1 :: (BitPack a, BitSize a ~ 32)=>a->BitVector 5
+set_rd :: (BitPack a, BitSize a ~ 32)=>BitVector 5->a->a
+set_rd = setSlice d11 d7
+lens_rs1 :: (BitPack a, BitSize a ~ 32) => Lens' a (BitVector 5)
+lens_rs1 = lens (slice d19 d15) (flip (setSlice d19 d15))
+
 get_rs1 = slice d19 d15
-get_rs2 :: (BitPack a, BitSize a ~ 32)=>a->BitVector 5
+set_rs1 :: (BitPack a, BitSize a ~ 32)=>BitVector 5->a->a
+set_rs1 = setSlice d19 d15
+lens_rs2 :: (BitPack a, BitSize a ~ 32) => Lens' a (BitVector 5)
+lens_rs2 = lens (slice d24 d20) (flip (setSlice d24 d20))
+
 get_rs2 = slice d24 d20
-get_rs3 :: (BitPack a, BitSize a ~ 32)=>a->BitVector 5
+set_rs2 :: (BitPack a, BitSize a ~ 32)=>BitVector 5->a->a
+set_rs2 = setSlice d24 d20
+lens_rs3 :: (BitPack a, BitSize a ~ 32) => Lens' a (BitVector 5)
+lens_rs3 = lens (slice d31 d27) (flip (setSlice d31 d27))
+
 get_rs3 = slice d31 d27
-get_aqrl :: (BitPack a, BitSize a ~ 32)=>a->BitVector 2
+set_rs3 :: (BitPack a, BitSize a ~ 32)=>BitVector 5->a->a
+set_rs3 = setSlice d31 d27
+lens_aqrl :: (BitPack a, BitSize a ~ 32) => Lens' a (BitVector 2)
+lens_aqrl = lens (slice d26 d25) (flip (setSlice d26 d25))
+
 get_aqrl = slice d26 d25
-get_pred :: (BitPack a, BitSize a ~ 32)=>a->BitVector 4
+set_aqrl :: (BitPack a, BitSize a ~ 32)=>BitVector 2->a->a
+set_aqrl = setSlice d26 d25
+lens_pred :: (BitPack a, BitSize a ~ 32) => Lens' a (BitVector 4)
+lens_pred = lens (slice d27 d24) (flip (setSlice d27 d24))
+
 get_pred = slice d27 d24
-get_succ :: (BitPack a, BitSize a ~ 32)=>a->BitVector 4
+set_pred :: (BitPack a, BitSize a ~ 32)=>BitVector 4->a->a
+set_pred = setSlice d27 d24
+lens_succ :: (BitPack a, BitSize a ~ 32) => Lens' a (BitVector 4)
+lens_succ = lens (slice d23 d20) (flip (setSlice d23 d20))
+
 get_succ = slice d23 d20
-get_rm :: (BitPack a, BitSize a ~ 32)=>a->BitVector 3
+set_succ :: (BitPack a, BitSize a ~ 32)=>BitVector 4->a->a
+set_succ = setSlice d23 d20
+lens_rm :: (BitPack a, BitSize a ~ 32) => Lens' a (BitVector 3)
+lens_rm = lens (slice d14 d12) (flip (setSlice d14 d12))
+
 get_rm = slice d14 d12
-get_imm20 :: (BitPack a, BitSize a ~ 32)=>a->BitVector 20
+set_rm :: (BitPack a, BitSize a ~ 32)=>BitVector 3->a->a
+set_rm = setSlice d14 d12
+lens_imm20 :: (BitPack a, BitSize a ~ 32) => Lens' a (BitVector 20)
+lens_imm20 = lens (slice d31 d12) (flip (setSlice d31 d12))
+
 get_imm20 = slice d31 d12
-get_jimm20 :: (BitPack a, BitSize a ~ 32)=>a->BitVector 20
+set_imm20 :: (BitPack a, BitSize a ~ 32)=>BitVector 20->a->a
+set_imm20 = setSlice d31 d12
+lens_jimm20 :: (BitPack a, BitSize a ~ 32) => Lens' a (BitVector 20)
+lens_jimm20 = lens (slice d31 d12) (flip (setSlice d31 d12))
+
 get_jimm20 = slice d31 d12
-get_imm12 :: (BitPack a, BitSize a ~ 32)=>a->BitVector 12
+set_jimm20 :: (BitPack a, BitSize a ~ 32)=>BitVector 20->a->a
+set_jimm20 = setSlice d31 d12
+lens_imm12 :: (BitPack a, BitSize a ~ 32) => Lens' a (BitVector 12)
+lens_imm12 = lens (slice d31 d20) (flip (setSlice d31 d20))
+
 get_imm12 = slice d31 d20
-get_imm12hi :: (BitPack a, BitSize a ~ 32)=>a->BitVector 7
+set_imm12 :: (BitPack a, BitSize a ~ 32)=>BitVector 12->a->a
+set_imm12 = setSlice d31 d20
+lens_imm12hi :: (BitPack a, BitSize a ~ 32) => Lens' a (BitVector 7)
+lens_imm12hi = lens (slice d31 d25) (flip (setSlice d31 d25))
+
 get_imm12hi = slice d31 d25
-get_bimm12hi :: (BitPack a, BitSize a ~ 32)=>a->BitVector 7
+set_imm12hi :: (BitPack a, BitSize a ~ 32)=>BitVector 7->a->a
+set_imm12hi = setSlice d31 d25
+lens_bimm12hi :: (BitPack a, BitSize a ~ 32) => Lens' a (BitVector 7)
+lens_bimm12hi = lens (slice d31 d25) (flip (setSlice d31 d25))
+
 get_bimm12hi = slice d31 d25
-get_imm12lo :: (BitPack a, BitSize a ~ 32)=>a->BitVector 5
+set_bimm12hi :: (BitPack a, BitSize a ~ 32)=>BitVector 7->a->a
+set_bimm12hi = setSlice d31 d25
+lens_imm12lo :: (BitPack a, BitSize a ~ 32) => Lens' a (BitVector 5)
+lens_imm12lo = lens (slice d11 d7) (flip (setSlice d11 d7))
+
 get_imm12lo = slice d11 d7
-get_bimm12lo :: (BitPack a, BitSize a ~ 32)=>a->BitVector 5
+set_imm12lo :: (BitPack a, BitSize a ~ 32)=>BitVector 5->a->a
+set_imm12lo = setSlice d11 d7
+lens_bimm12lo :: (BitPack a, BitSize a ~ 32) => Lens' a (BitVector 5)
+lens_bimm12lo = lens (slice d11 d7) (flip (setSlice d11 d7))
+
 get_bimm12lo = slice d11 d7
-get_zimm :: (BitPack a, BitSize a ~ 32)=>a->BitVector 5
+set_bimm12lo :: (BitPack a, BitSize a ~ 32)=>BitVector 5->a->a
+set_bimm12lo = setSlice d11 d7
+lens_zimm :: (BitPack a, BitSize a ~ 32) => Lens' a (BitVector 5)
+lens_zimm = lens (slice d19 d15) (flip (setSlice d19 d15))
+
 get_zimm = slice d19 d15
-get_shamt :: (BitPack a, BitSize a ~ 32)=>a->BitVector 6
+set_zimm :: (BitPack a, BitSize a ~ 32)=>BitVector 5->a->a
+set_zimm = setSlice d19 d15
+lens_shamt :: (BitPack a, BitSize a ~ 32) => Lens' a (BitVector 6)
+lens_shamt = lens (slice d25 d20) (flip (setSlice d25 d20))
+
 get_shamt = slice d25 d20
-get_shamtw :: (BitPack a, BitSize a ~ 32)=>a->BitVector 5
+set_shamt :: (BitPack a, BitSize a ~ 32)=>BitVector 6->a->a
+set_shamt = setSlice d25 d20
+lens_shamtw :: (BitPack a, BitSize a ~ 32) => Lens' a (BitVector 5)
+lens_shamtw = lens (slice d24 d20) (flip (setSlice d24 d20))
+
 get_shamtw = slice d24 d20
-get_vseglen :: (BitPack a, BitSize a ~ 32)=>a->BitVector 3
+set_shamtw :: (BitPack a, BitSize a ~ 32)=>BitVector 5->a->a
+set_shamtw = setSlice d24 d20
+lens_vseglen :: (BitPack a, BitSize a ~ 32) => Lens' a (BitVector 3)
+lens_vseglen = lens (slice d31 d29) (flip (setSlice d31 d29))
+
 get_vseglen = slice d31 d29
-instance InstructionMatch "beq" where inst i = if (slice d14 d12 i==0) && (slice d6 d2 i==0x18) && (slice d1 d0 i==3) then Just $ parseB i else Nothing
-instance InstructionMatch "bne" where inst i = if (slice d14 d12 i==1) && (slice d6 d2 i==0x18) && (slice d1 d0 i==3) then Just $ parseB i else Nothing
-instance InstructionMatch "blt" where inst i = if (slice d14 d12 i==4) && (slice d6 d2 i==0x18) && (slice d1 d0 i==3) then Just $ parseB i else Nothing
-instance InstructionMatch "bge" where inst i = if (slice d14 d12 i==5) && (slice d6 d2 i==0x18) && (slice d1 d0 i==3) then Just $ parseB i else Nothing
-instance InstructionMatch "bltu" where inst i = if (slice d14 d12 i==6) && (slice d6 d2 i==0x18) && (slice d1 d0 i==3) then Just $ parseB i else Nothing
-instance InstructionMatch "bgeu" where inst i = if (slice d14 d12 i==7) && (slice d6 d2 i==0x18) && (slice d1 d0 i==3) then Just $ parseB i else Nothing
-instance InstructionMatch "jalr" where inst i = if (slice d14 d12 i==0) && (slice d6 d2 i==0x19) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "jal" where inst i = if (slice d6 d2 i==0x1b) && (slice d1 d0 i==3) then Just $ parseJ i else Nothing
-instance InstructionMatch "lui" where inst i = if (slice d6 d2 i==0x0D) && (slice d1 d0 i==3) then Just $ parseU i else Nothing
-instance InstructionMatch "auipc" where inst i = if (slice d6 d2 i==0x05) && (slice d1 d0 i==3) then Just $ parseU i else Nothing
-instance InstructionMatch "addi" where inst i = if (slice d14 d12 i==0) && (slice d6 d2 i==0x04) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "slli" where inst i = if (slice d31 d26 i==0) && (slice d14 d12 i==1) && (slice d6 d2 i==0x04) && (slice d1 d0 i==3) then Just $ parseSh i else Nothing
-instance InstructionMatch "slti" where inst i = if (slice d14 d12 i==2) && (slice d6 d2 i==0x04) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "sltiu" where inst i = if (slice d14 d12 i==3) && (slice d6 d2 i==0x04) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "xori" where inst i = if (slice d14 d12 i==4) && (slice d6 d2 i==0x04) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "srli" where inst i = if (slice d31 d26 i==0) && (slice d14 d12 i==5) && (slice d6 d2 i==0x04) && (slice d1 d0 i==3) then Just $ parseSh i else Nothing
-instance InstructionMatch "srai" where inst i = if (slice d31 d26 i==16) && (slice d14 d12 i==5) && (slice d6 d2 i==0x04) && (slice d1 d0 i==3) then Just $ parseSh i else Nothing
-instance InstructionMatch "ori" where inst i = if (slice d14 d12 i==6) && (slice d6 d2 i==0x04) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "andi" where inst i = if (slice d14 d12 i==7) && (slice d6 d2 i==0x04) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "add" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==0) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "sub" where inst i = if (slice d31 d25 i==32) && (slice d14 d12 i==0) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "sll" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==1) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "slt" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "sltu" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "xor" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==4) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "srl" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==5) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "sra" where inst i = if (slice d31 d25 i==32) && (slice d14 d12 i==5) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "or" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==6) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "and" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==7) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "addiw" where inst i = if (slice d14 d12 i==0) && (slice d6 d2 i==0x06) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "slliw" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==1) && (slice d6 d2 i==0x06) && (slice d1 d0 i==3) then Just $ parseSh i else Nothing
-instance InstructionMatch "srliw" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==5) && (slice d6 d2 i==0x06) && (slice d1 d0 i==3) then Just $ parseSh i else Nothing
-instance InstructionMatch "sraiw" where inst i = if (slice d31 d25 i==32) && (slice d14 d12 i==5) && (slice d6 d2 i==0x06) && (slice d1 d0 i==3) then Just $ parseSh i else Nothing
-instance InstructionMatch "addw" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==0) && (slice d6 d2 i==0x0E) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "subw" where inst i = if (slice d31 d25 i==32) && (slice d14 d12 i==0) && (slice d6 d2 i==0x0E) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "sllw" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==1) && (slice d6 d2 i==0x0E) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "srlw" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==5) && (slice d6 d2 i==0x0E) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "sraw" where inst i = if (slice d31 d25 i==32) && (slice d14 d12 i==5) && (slice d6 d2 i==0x0E) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "lb" where inst i = if (slice d14 d12 i==0) && (slice d6 d2 i==0x00) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "lh" where inst i = if (slice d14 d12 i==1) && (slice d6 d2 i==0x00) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "lw" where inst i = if (slice d14 d12 i==2) && (slice d6 d2 i==0x00) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "ld" where inst i = if (slice d14 d12 i==3) && (slice d6 d2 i==0x00) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "lbu" where inst i = if (slice d14 d12 i==4) && (slice d6 d2 i==0x00) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "lhu" where inst i = if (slice d14 d12 i==5) && (slice d6 d2 i==0x00) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "lwu" where inst i = if (slice d14 d12 i==6) && (slice d6 d2 i==0x00) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "sb" where inst i = if (slice d14 d12 i==0) && (slice d6 d2 i==0x08) && (slice d1 d0 i==3) then Just $ parseS i else Nothing
-instance InstructionMatch "sh" where inst i = if (slice d14 d12 i==1) && (slice d6 d2 i==0x08) && (slice d1 d0 i==3) then Just $ parseS i else Nothing
-instance InstructionMatch "sw" where inst i = if (slice d14 d12 i==2) && (slice d6 d2 i==0x08) && (slice d1 d0 i==3) then Just $ parseS i else Nothing
-instance InstructionMatch "sd" where inst i = if (slice d14 d12 i==3) && (slice d6 d2 i==0x08) && (slice d1 d0 i==3) then Just $ parseS i else Nothing
-instance InstructionMatch "fence" where inst i = if (slice d14 d12 i==0) && (slice d6 d2 i==0x03) && (slice d1 d0 i==3) then Just $ parseFc i else Nothing
-instance InstructionMatch "fence.i" where inst i = if (slice d14 d12 i==1) && (slice d6 d2 i==0x03) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "mul" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==0) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "mulh" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==1) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "mulhsu" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "mulhu" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "div" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==4) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "divu" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==5) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "rem" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==6) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "remu" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==7) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "mulw" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==0) && (slice d6 d2 i==0x0E) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "divw" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==4) && (slice d6 d2 i==0x0E) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "divuw" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==5) && (slice d6 d2 i==0x0E) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "remw" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==6) && (slice d6 d2 i==0x0E) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "remuw" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==7) && (slice d6 d2 i==0x0E) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "amoadd.w" where inst i = if (slice d31 d29 i==0) && (slice d28 d27 i==0) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "amoxor.w" where inst i = if (slice d31 d29 i==1) && (slice d28 d27 i==0) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "amoor.w" where inst i = if (slice d31 d29 i==2) && (slice d28 d27 i==0) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "amoand.w" where inst i = if (slice d31 d29 i==3) && (slice d28 d27 i==0) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "amomin.w" where inst i = if (slice d31 d29 i==4) && (slice d28 d27 i==0) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "amomax.w" where inst i = if (slice d31 d29 i==5) && (slice d28 d27 i==0) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "amominu.w" where inst i = if (slice d31 d29 i==6) && (slice d28 d27 i==0) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "amomaxu.w" where inst i = if (slice d31 d29 i==7) && (slice d28 d27 i==0) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "amoswap.w" where inst i = if (slice d31 d29 i==0) && (slice d28 d27 i==1) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "lr.w" where inst i = if (slice d24 d20 i==0) && (slice d31 d29 i==0) && (slice d28 d27 i==2) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "sc.w" where inst i = if (slice d31 d29 i==0) && (slice d28 d27 i==3) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "amoadd.d" where inst i = if (slice d31 d29 i==0) && (slice d28 d27 i==0) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "amoxor.d" where inst i = if (slice d31 d29 i==1) && (slice d28 d27 i==0) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "amoor.d" where inst i = if (slice d31 d29 i==2) && (slice d28 d27 i==0) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "amoand.d" where inst i = if (slice d31 d29 i==3) && (slice d28 d27 i==0) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "amomin.d" where inst i = if (slice d31 d29 i==4) && (slice d28 d27 i==0) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "amomax.d" where inst i = if (slice d31 d29 i==5) && (slice d28 d27 i==0) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "amominu.d" where inst i = if (slice d31 d29 i==6) && (slice d28 d27 i==0) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "amomaxu.d" where inst i = if (slice d31 d29 i==7) && (slice d28 d27 i==0) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "amoswap.d" where inst i = if (slice d31 d29 i==0) && (slice d28 d27 i==1) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "lr.d" where inst i = if (slice d24 d20 i==0) && (slice d31 d29 i==0) && (slice d28 d27 i==2) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "sc.d" where inst i = if (slice d31 d29 i==0) && (slice d28 d27 i==3) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing
-instance InstructionMatch "ecall" where inst i = if (slice d11 d7 i==0) && (slice d19 d15 i==0) && (slice d31 d20 i==0x000) && (slice d14 d12 i==0) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "ebreak" where inst i = if (slice d11 d7 i==0) && (slice d19 d15 i==0) && (slice d31 d20 i==0x001) && (slice d14 d12 i==0) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "uret" where inst i = if (slice d11 d7 i==0) && (slice d19 d15 i==0) && (slice d31 d20 i==0x002) && (slice d14 d12 i==0) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "sret" where inst i = if (slice d11 d7 i==0) && (slice d19 d15 i==0) && (slice d31 d20 i==0x102) && (slice d14 d12 i==0) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "mret" where inst i = if (slice d11 d7 i==0) && (slice d19 d15 i==0) && (slice d31 d20 i==0x302) && (slice d14 d12 i==0) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "dret" where inst i = if (slice d11 d7 i==0) && (slice d19 d15 i==0) && (slice d31 d20 i==0x7b2) && (slice d14 d12 i==0) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "sfence.vma" where inst i = if (slice d11 d7 i==0) && (slice d31 d25 i==0x09) && (slice d14 d12 i==0) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "wfi" where inst i = if (slice d11 d7 i==0) && (slice d19 d15 i==0) && (slice d31 d20 i==0x105) && (slice d14 d12 i==0) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "csrrw" where inst i = if (slice d14 d12 i==1) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "csrrs" where inst i = if (slice d14 d12 i==2) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "csrrc" where inst i = if (slice d14 d12 i==3) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "csrrwi" where inst i = if (slice d14 d12 i==5) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "csrrsi" where inst i = if (slice d14 d12 i==6) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "csrrci" where inst i = if (slice d14 d12 i==7) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "hfence.vvma" where inst i = if (slice d11 d7 i==0) && (slice d31 d25 i==0x11) && (slice d14 d12 i==0) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "hfence.gvma" where inst i = if (slice d11 d7 i==0) && (slice d31 d25 i==0x31) && (slice d14 d12 i==0) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fadd.s" where inst i = if (slice d31 d27 i==0x00) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fsub.s" where inst i = if (slice d31 d27 i==0x01) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fmul.s" where inst i = if (slice d31 d27 i==0x02) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fdiv.s" where inst i = if (slice d31 d27 i==0x03) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fsgnj.s" where inst i = if (slice d31 d27 i==0x04) && (slice d14 d12 i==0) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fsgnjn.s" where inst i = if (slice d31 d27 i==0x04) && (slice d14 d12 i==1) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fsgnjx.s" where inst i = if (slice d31 d27 i==0x04) && (slice d14 d12 i==2) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fmin.s" where inst i = if (slice d31 d27 i==0x05) && (slice d14 d12 i==0) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fmax.s" where inst i = if (slice d31 d27 i==0x05) && (slice d14 d12 i==1) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fsqrt.s" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x0B) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fadd.d" where inst i = if (slice d31 d27 i==0x00) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fsub.d" where inst i = if (slice d31 d27 i==0x01) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fmul.d" where inst i = if (slice d31 d27 i==0x02) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fdiv.d" where inst i = if (slice d31 d27 i==0x03) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fsgnj.d" where inst i = if (slice d31 d27 i==0x04) && (slice d14 d12 i==0) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fsgnjn.d" where inst i = if (slice d31 d27 i==0x04) && (slice d14 d12 i==1) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fsgnjx.d" where inst i = if (slice d31 d27 i==0x04) && (slice d14 d12 i==2) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fmin.d" where inst i = if (slice d31 d27 i==0x05) && (slice d14 d12 i==0) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fmax.d" where inst i = if (slice d31 d27 i==0x05) && (slice d14 d12 i==1) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fcvt.s.d" where inst i = if (slice d24 d20 i==1) && (slice d31 d27 i==0x08) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.d.s" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x08) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fsqrt.d" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x0B) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fadd.q" where inst i = if (slice d31 d27 i==0x00) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fsub.q" where inst i = if (slice d31 d27 i==0x01) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fmul.q" where inst i = if (slice d31 d27 i==0x02) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fdiv.q" where inst i = if (slice d31 d27 i==0x03) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fsgnj.q" where inst i = if (slice d31 d27 i==0x04) && (slice d14 d12 i==0) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fsgnjn.q" where inst i = if (slice d31 d27 i==0x04) && (slice d14 d12 i==1) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fsgnjx.q" where inst i = if (slice d31 d27 i==0x04) && (slice d14 d12 i==2) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fmin.q" where inst i = if (slice d31 d27 i==0x05) && (slice d14 d12 i==0) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fmax.q" where inst i = if (slice d31 d27 i==0x05) && (slice d14 d12 i==1) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fcvt.s.q" where inst i = if (slice d24 d20 i==3) && (slice d31 d27 i==0x08) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.q.s" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x08) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.d.q" where inst i = if (slice d24 d20 i==3) && (slice d31 d27 i==0x08) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.q.d" where inst i = if (slice d24 d20 i==1) && (slice d31 d27 i==0x08) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fsqrt.q" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x0B) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fle.s" where inst i = if (slice d31 d27 i==0x14) && (slice d14 d12 i==0) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "flt.s" where inst i = if (slice d31 d27 i==0x14) && (slice d14 d12 i==1) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "feq.s" where inst i = if (slice d31 d27 i==0x14) && (slice d14 d12 i==2) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fle.d" where inst i = if (slice d31 d27 i==0x14) && (slice d14 d12 i==0) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "flt.d" where inst i = if (slice d31 d27 i==0x14) && (slice d14 d12 i==1) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "feq.d" where inst i = if (slice d31 d27 i==0x14) && (slice d14 d12 i==2) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fle.q" where inst i = if (slice d31 d27 i==0x14) && (slice d14 d12 i==0) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "flt.q" where inst i = if (slice d31 d27 i==0x14) && (slice d14 d12 i==1) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "feq.q" where inst i = if (slice d31 d27 i==0x14) && (slice d14 d12 i==2) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fcvt.w.s" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x18) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.wu.s" where inst i = if (slice d24 d20 i==1) && (slice d31 d27 i==0x18) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.l.s" where inst i = if (slice d24 d20 i==2) && (slice d31 d27 i==0x18) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.lu.s" where inst i = if (slice d24 d20 i==3) && (slice d31 d27 i==0x18) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fmv.x.w" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1C) && (slice d14 d12 i==0) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fclass.s" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1C) && (slice d14 d12 i==1) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fcvt.w.d" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x18) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.wu.d" where inst i = if (slice d24 d20 i==1) && (slice d31 d27 i==0x18) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.l.d" where inst i = if (slice d24 d20 i==2) && (slice d31 d27 i==0x18) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.lu.d" where inst i = if (slice d24 d20 i==3) && (slice d31 d27 i==0x18) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fmv.x.d" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1C) && (slice d14 d12 i==0) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fclass.d" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1C) && (slice d14 d12 i==1) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fcvt.w.q" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x18) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.wu.q" where inst i = if (slice d24 d20 i==1) && (slice d31 d27 i==0x18) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.l.q" where inst i = if (slice d24 d20 i==2) && (slice d31 d27 i==0x18) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.lu.q" where inst i = if (slice d24 d20 i==3) && (slice d31 d27 i==0x18) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fmv.x.q" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1C) && (slice d14 d12 i==0) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fclass.q" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1C) && (slice d14 d12 i==1) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fcvt.s.w" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.s.wu" where inst i = if (slice d24 d20 i==1) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.s.l" where inst i = if (slice d24 d20 i==2) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.s.lu" where inst i = if (slice d24 d20 i==3) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fmv.w.x" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1E) && (slice d14 d12 i==0) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fcvt.d.w" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.d.wu" where inst i = if (slice d24 d20 i==1) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.d.l" where inst i = if (slice d24 d20 i==2) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.d.lu" where inst i = if (slice d24 d20 i==3) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fmv.d.x" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1E) && (slice d14 d12 i==0) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "fcvt.q.w" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.q.wu" where inst i = if (slice d24 d20 i==1) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.q.l" where inst i = if (slice d24 d20 i==2) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fcvt.q.lu" where inst i = if (slice d24 d20 i==3) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing
-instance InstructionMatch "fmv.q.x" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1E) && (slice d14 d12 i==0) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing
-instance InstructionMatch "flw" where inst i = if (slice d14 d12 i==2) && (slice d6 d2 i==0x01) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "fld" where inst i = if (slice d14 d12 i==3) && (slice d6 d2 i==0x01) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "flq" where inst i = if (slice d14 d12 i==4) && (slice d6 d2 i==0x01) && (slice d1 d0 i==3) then Just $ parseI i else Nothing
-instance InstructionMatch "fsw" where inst i = if (slice d14 d12 i==2) && (slice d6 d2 i==0x09) && (slice d1 d0 i==3) then Just $ parseS i else Nothing
-instance InstructionMatch "fsd" where inst i = if (slice d14 d12 i==3) && (slice d6 d2 i==0x09) && (slice d1 d0 i==3) then Just $ parseS i else Nothing
-instance InstructionMatch "fsq" where inst i = if (slice d14 d12 i==4) && (slice d6 d2 i==0x09) && (slice d1 d0 i==3) then Just $ parseS i else Nothing
-instance InstructionMatch "fmadd.s" where inst i = if (slice d26 d25 i==0) && (slice d6 d2 i==0x10) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing
-instance InstructionMatch "fmsub.s" where inst i = if (slice d26 d25 i==0) && (slice d6 d2 i==0x11) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing
-instance InstructionMatch "fnmsub.s" where inst i = if (slice d26 d25 i==0) && (slice d6 d2 i==0x12) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing
-instance InstructionMatch "fnmadd.s" where inst i = if (slice d26 d25 i==0) && (slice d6 d2 i==0x13) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing
-instance InstructionMatch "fmadd.d" where inst i = if (slice d26 d25 i==1) && (slice d6 d2 i==0x10) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing
-instance InstructionMatch "fmsub.d" where inst i = if (slice d26 d25 i==1) && (slice d6 d2 i==0x11) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing
-instance InstructionMatch "fnmsub.d" where inst i = if (slice d26 d25 i==1) && (slice d6 d2 i==0x12) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing
-instance InstructionMatch "fnmadd.d" where inst i = if (slice d26 d25 i==1) && (slice d6 d2 i==0x13) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing
-instance InstructionMatch "fmadd.q" where inst i = if (slice d26 d25 i==3) && (slice d6 d2 i==0x10) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing
-instance InstructionMatch "fmsub.q" where inst i = if (slice d26 d25 i==3) && (slice d6 d2 i==0x11) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing
-instance InstructionMatch "fnmsub.q" where inst i = if (slice d26 d25 i==3) && (slice d6 d2 i==0x12) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing
-instance InstructionMatch "fnmadd.q" where inst i = if (slice d26 d25 i==3) && (slice d6 d2 i==0x13) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing
+set_vseglen :: (BitPack a, BitSize a ~ 32)=>BitVector 3->a->a
+set_vseglen = setSlice d31 d29
+instance InstructionMatch "beq" where inst i = if (slice d14 d12 i==0) && (slice d6 d2 i==0x18) && (slice d1 d0 i==3) then Just $ parseB i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 0) . (setSlice d6 d2 0x18) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "bne" where inst i = if (slice d14 d12 i==1) && (slice d6 d2 i==0x18) && (slice d1 d0 i==3) then Just $ parseB i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 1) . (setSlice d6 d2 0x18) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "blt" where inst i = if (slice d14 d12 i==4) && (slice d6 d2 i==0x18) && (slice d1 d0 i==3) then Just $ parseB i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 4) . (setSlice d6 d2 0x18) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "bge" where inst i = if (slice d14 d12 i==5) && (slice d6 d2 i==0x18) && (slice d1 d0 i==3) then Just $ parseB i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 5) . (setSlice d6 d2 0x18) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "bltu" where inst i = if (slice d14 d12 i==6) && (slice d6 d2 i==0x18) && (slice d1 d0 i==3) then Just $ parseB i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 6) . (setSlice d6 d2 0x18) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "bgeu" where inst i = if (slice d14 d12 i==7) && (slice d6 d2 i==0x18) && (slice d1 d0 i==3) then Just $ parseB i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 7) . (setSlice d6 d2 0x18) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "jalr" where inst i = if (slice d14 d12 i==0) && (slice d6 d2 i==0x19) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 0) . (setSlice d6 d2 0x19) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "jal" where inst i = if (slice d6 d2 i==0x1b) && (slice d1 d0 i==3) then Just $ parseJ i else Nothing;encodeInst f = ((placeFields f) . (setSlice d6 d2 0x1b) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "lui" where inst i = if (slice d6 d2 i==0x0D) && (slice d1 d0 i==3) then Just $ parseU i else Nothing;encodeInst f = ((placeFields f) . (setSlice d6 d2 0x0D) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "auipc" where inst i = if (slice d6 d2 i==0x05) && (slice d1 d0 i==3) then Just $ parseU i else Nothing;encodeInst f = ((placeFields f) . (setSlice d6 d2 0x05) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "addi" where inst i = if (slice d14 d12 i==0) && (slice d6 d2 i==0x04) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 0) . (setSlice d6 d2 0x04) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "slli" where inst i = if (slice d31 d26 i==0) && (slice d14 d12 i==1) && (slice d6 d2 i==0x04) && (slice d1 d0 i==3) then Just $ parseSh i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d26 0) . (setSlice d14 d12 1) . (setSlice d6 d2 0x04) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "slti" where inst i = if (slice d14 d12 i==2) && (slice d6 d2 i==0x04) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 2) . (setSlice d6 d2 0x04) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "sltiu" where inst i = if (slice d14 d12 i==3) && (slice d6 d2 i==0x04) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 3) . (setSlice d6 d2 0x04) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "xori" where inst i = if (slice d14 d12 i==4) && (slice d6 d2 i==0x04) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 4) . (setSlice d6 d2 0x04) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "srli" where inst i = if (slice d31 d26 i==0) && (slice d14 d12 i==5) && (slice d6 d2 i==0x04) && (slice d1 d0 i==3) then Just $ parseSh i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d26 0) . (setSlice d14 d12 5) . (setSlice d6 d2 0x04) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "srai" where inst i = if (slice d31 d26 i==16) && (slice d14 d12 i==5) && (slice d6 d2 i==0x04) && (slice d1 d0 i==3) then Just $ parseSh i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d26 16) . (setSlice d14 d12 5) . (setSlice d6 d2 0x04) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "ori" where inst i = if (slice d14 d12 i==6) && (slice d6 d2 i==0x04) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 6) . (setSlice d6 d2 0x04) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "andi" where inst i = if (slice d14 d12 i==7) && (slice d6 d2 i==0x04) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 7) . (setSlice d6 d2 0x04) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "add" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==0) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 0) . (setSlice d14 d12 0) . (setSlice d6 d2 0x0C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "sub" where inst i = if (slice d31 d25 i==32) && (slice d14 d12 i==0) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 32) . (setSlice d14 d12 0) . (setSlice d6 d2 0x0C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "sll" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==1) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 0) . (setSlice d14 d12 1) . (setSlice d6 d2 0x0C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "slt" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 0) . (setSlice d14 d12 2) . (setSlice d6 d2 0x0C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "sltu" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 0) . (setSlice d14 d12 3) . (setSlice d6 d2 0x0C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "xor" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==4) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 0) . (setSlice d14 d12 4) . (setSlice d6 d2 0x0C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "srl" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==5) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 0) . (setSlice d14 d12 5) . (setSlice d6 d2 0x0C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "sra" where inst i = if (slice d31 d25 i==32) && (slice d14 d12 i==5) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 32) . (setSlice d14 d12 5) . (setSlice d6 d2 0x0C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "or" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==6) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 0) . (setSlice d14 d12 6) . (setSlice d6 d2 0x0C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "and" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==7) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 0) . (setSlice d14 d12 7) . (setSlice d6 d2 0x0C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "addiw" where inst i = if (slice d14 d12 i==0) && (slice d6 d2 i==0x06) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 0) . (setSlice d6 d2 0x06) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "slliw" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==1) && (slice d6 d2 i==0x06) && (slice d1 d0 i==3) then Just $ parseSh i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 0) . (setSlice d14 d12 1) . (setSlice d6 d2 0x06) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "srliw" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==5) && (slice d6 d2 i==0x06) && (slice d1 d0 i==3) then Just $ parseSh i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 0) . (setSlice d14 d12 5) . (setSlice d6 d2 0x06) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "sraiw" where inst i = if (slice d31 d25 i==32) && (slice d14 d12 i==5) && (slice d6 d2 i==0x06) && (slice d1 d0 i==3) then Just $ parseSh i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 32) . (setSlice d14 d12 5) . (setSlice d6 d2 0x06) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "addw" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==0) && (slice d6 d2 i==0x0E) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 0) . (setSlice d14 d12 0) . (setSlice d6 d2 0x0E) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "subw" where inst i = if (slice d31 d25 i==32) && (slice d14 d12 i==0) && (slice d6 d2 i==0x0E) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 32) . (setSlice d14 d12 0) . (setSlice d6 d2 0x0E) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "sllw" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==1) && (slice d6 d2 i==0x0E) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 0) . (setSlice d14 d12 1) . (setSlice d6 d2 0x0E) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "srlw" where inst i = if (slice d31 d25 i==0) && (slice d14 d12 i==5) && (slice d6 d2 i==0x0E) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 0) . (setSlice d14 d12 5) . (setSlice d6 d2 0x0E) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "sraw" where inst i = if (slice d31 d25 i==32) && (slice d14 d12 i==5) && (slice d6 d2 i==0x0E) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 32) . (setSlice d14 d12 5) . (setSlice d6 d2 0x0E) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "lb" where inst i = if (slice d14 d12 i==0) && (slice d6 d2 i==0x00) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 0) . (setSlice d6 d2 0x00) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "lh" where inst i = if (slice d14 d12 i==1) && (slice d6 d2 i==0x00) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 1) . (setSlice d6 d2 0x00) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "lw" where inst i = if (slice d14 d12 i==2) && (slice d6 d2 i==0x00) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 2) . (setSlice d6 d2 0x00) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "ld" where inst i = if (slice d14 d12 i==3) && (slice d6 d2 i==0x00) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 3) . (setSlice d6 d2 0x00) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "lbu" where inst i = if (slice d14 d12 i==4) && (slice d6 d2 i==0x00) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 4) . (setSlice d6 d2 0x00) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "lhu" where inst i = if (slice d14 d12 i==5) && (slice d6 d2 i==0x00) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 5) . (setSlice d6 d2 0x00) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "lwu" where inst i = if (slice d14 d12 i==6) && (slice d6 d2 i==0x00) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 6) . (setSlice d6 d2 0x00) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "sb" where inst i = if (slice d14 d12 i==0) && (slice d6 d2 i==0x08) && (slice d1 d0 i==3) then Just $ parseS i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 0) . (setSlice d6 d2 0x08) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "sh" where inst i = if (slice d14 d12 i==1) && (slice d6 d2 i==0x08) && (slice d1 d0 i==3) then Just $ parseS i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 1) . (setSlice d6 d2 0x08) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "sw" where inst i = if (slice d14 d12 i==2) && (slice d6 d2 i==0x08) && (slice d1 d0 i==3) then Just $ parseS i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 2) . (setSlice d6 d2 0x08) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "sd" where inst i = if (slice d14 d12 i==3) && (slice d6 d2 i==0x08) && (slice d1 d0 i==3) then Just $ parseS i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 3) . (setSlice d6 d2 0x08) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fence" where inst i = if (slice d14 d12 i==0) && (slice d6 d2 i==0x03) && (slice d1 d0 i==3) then Just $ parseFc i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 0) . (setSlice d6 d2 0x03) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fence.i" where inst i = if (slice d14 d12 i==1) && (slice d6 d2 i==0x03) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 1) . (setSlice d6 d2 0x03) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "mul" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==0) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 1) . (setSlice d14 d12 0) . (setSlice d6 d2 0x0C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "mulh" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==1) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 1) . (setSlice d14 d12 1) . (setSlice d6 d2 0x0C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "mulhsu" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 1) . (setSlice d14 d12 2) . (setSlice d6 d2 0x0C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "mulhu" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 1) . (setSlice d14 d12 3) . (setSlice d6 d2 0x0C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "div" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==4) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 1) . (setSlice d14 d12 4) . (setSlice d6 d2 0x0C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "divu" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==5) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 1) . (setSlice d14 d12 5) . (setSlice d6 d2 0x0C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "rem" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==6) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 1) . (setSlice d14 d12 6) . (setSlice d6 d2 0x0C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "remu" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==7) && (slice d6 d2 i==0x0C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 1) . (setSlice d14 d12 7) . (setSlice d6 d2 0x0C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "mulw" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==0) && (slice d6 d2 i==0x0E) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 1) . (setSlice d14 d12 0) . (setSlice d6 d2 0x0E) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "divw" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==4) && (slice d6 d2 i==0x0E) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 1) . (setSlice d14 d12 4) . (setSlice d6 d2 0x0E) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "divuw" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==5) && (slice d6 d2 i==0x0E) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 1) . (setSlice d14 d12 5) . (setSlice d6 d2 0x0E) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "remw" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==6) && (slice d6 d2 i==0x0E) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 1) . (setSlice d14 d12 6) . (setSlice d6 d2 0x0E) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "remuw" where inst i = if (slice d31 d25 i==1) && (slice d14 d12 i==7) && (slice d6 d2 i==0x0E) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d25 1) . (setSlice d14 d12 7) . (setSlice d6 d2 0x0E) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "amoadd.w" where inst i = if (slice d31 d29 i==0) && (slice d28 d27 i==0) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d29 0) . (setSlice d28 d27 0) . (setSlice d14 d12 2) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "amoxor.w" where inst i = if (slice d31 d29 i==1) && (slice d28 d27 i==0) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d29 1) . (setSlice d28 d27 0) . (setSlice d14 d12 2) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "amoor.w" where inst i = if (slice d31 d29 i==2) && (slice d28 d27 i==0) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d29 2) . (setSlice d28 d27 0) . (setSlice d14 d12 2) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "amoand.w" where inst i = if (slice d31 d29 i==3) && (slice d28 d27 i==0) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d29 3) . (setSlice d28 d27 0) . (setSlice d14 d12 2) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "amomin.w" where inst i = if (slice d31 d29 i==4) && (slice d28 d27 i==0) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d29 4) . (setSlice d28 d27 0) . (setSlice d14 d12 2) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "amomax.w" where inst i = if (slice d31 d29 i==5) && (slice d28 d27 i==0) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d29 5) . (setSlice d28 d27 0) . (setSlice d14 d12 2) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "amominu.w" where inst i = if (slice d31 d29 i==6) && (slice d28 d27 i==0) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d29 6) . (setSlice d28 d27 0) . (setSlice d14 d12 2) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "amomaxu.w" where inst i = if (slice d31 d29 i==7) && (slice d28 d27 i==0) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d29 7) . (setSlice d28 d27 0) . (setSlice d14 d12 2) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "amoswap.w" where inst i = if (slice d31 d29 i==0) && (slice d28 d27 i==1) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d29 0) . (setSlice d28 d27 1) . (setSlice d14 d12 2) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "lr.w" where inst i = if (slice d24 d20 i==0) && (slice d31 d29 i==0) && (slice d28 d27 i==2) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d29 0) . (setSlice d28 d27 2) . (setSlice d14 d12 2) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "sc.w" where inst i = if (slice d31 d29 i==0) && (slice d28 d27 i==3) && (slice d14 d12 i==2) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d29 0) . (setSlice d28 d27 3) . (setSlice d14 d12 2) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "amoadd.d" where inst i = if (slice d31 d29 i==0) && (slice d28 d27 i==0) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d29 0) . (setSlice d28 d27 0) . (setSlice d14 d12 3) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "amoxor.d" where inst i = if (slice d31 d29 i==1) && (slice d28 d27 i==0) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d29 1) . (setSlice d28 d27 0) . (setSlice d14 d12 3) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "amoor.d" where inst i = if (slice d31 d29 i==2) && (slice d28 d27 i==0) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d29 2) . (setSlice d28 d27 0) . (setSlice d14 d12 3) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "amoand.d" where inst i = if (slice d31 d29 i==3) && (slice d28 d27 i==0) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d29 3) . (setSlice d28 d27 0) . (setSlice d14 d12 3) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "amomin.d" where inst i = if (slice d31 d29 i==4) && (slice d28 d27 i==0) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d29 4) . (setSlice d28 d27 0) . (setSlice d14 d12 3) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "amomax.d" where inst i = if (slice d31 d29 i==5) && (slice d28 d27 i==0) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d29 5) . (setSlice d28 d27 0) . (setSlice d14 d12 3) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "amominu.d" where inst i = if (slice d31 d29 i==6) && (slice d28 d27 i==0) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d29 6) . (setSlice d28 d27 0) . (setSlice d14 d12 3) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "amomaxu.d" where inst i = if (slice d31 d29 i==7) && (slice d28 d27 i==0) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d29 7) . (setSlice d28 d27 0) . (setSlice d14 d12 3) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "amoswap.d" where inst i = if (slice d31 d29 i==0) && (slice d28 d27 i==1) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d29 0) . (setSlice d28 d27 1) . (setSlice d14 d12 3) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "lr.d" where inst i = if (slice d24 d20 i==0) && (slice d31 d29 i==0) && (slice d28 d27 i==2) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d29 0) . (setSlice d28 d27 2) . (setSlice d14 d12 3) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "sc.d" where inst i = if (slice d31 d29 i==0) && (slice d28 d27 i==3) && (slice d14 d12 i==3) && (slice d6 d2 i==0x0B) && (slice d1 d0 i==3) then Just $ parseAt i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d29 0) . (setSlice d28 d27 3) . (setSlice d14 d12 3) . (setSlice d6 d2 0x0B) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "ecall" where inst i = if (slice d11 d7 i==0) && (slice d19 d15 i==0) && (slice d31 d20 i==0x000) && (slice d14 d12 i==0) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d11 d7 0) . (setSlice d19 d15 0) . (setSlice d31 d20 0x000) . (setSlice d14 d12 0) . (setSlice d6 d2 0x1C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "ebreak" where inst i = if (slice d11 d7 i==0) && (slice d19 d15 i==0) && (slice d31 d20 i==0x001) && (slice d14 d12 i==0) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d11 d7 0) . (setSlice d19 d15 0) . (setSlice d31 d20 0x001) . (setSlice d14 d12 0) . (setSlice d6 d2 0x1C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "uret" where inst i = if (slice d11 d7 i==0) && (slice d19 d15 i==0) && (slice d31 d20 i==0x002) && (slice d14 d12 i==0) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d11 d7 0) . (setSlice d19 d15 0) . (setSlice d31 d20 0x002) . (setSlice d14 d12 0) . (setSlice d6 d2 0x1C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "sret" where inst i = if (slice d11 d7 i==0) && (slice d19 d15 i==0) && (slice d31 d20 i==0x102) && (slice d14 d12 i==0) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d11 d7 0) . (setSlice d19 d15 0) . (setSlice d31 d20 0x102) . (setSlice d14 d12 0) . (setSlice d6 d2 0x1C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "mret" where inst i = if (slice d11 d7 i==0) && (slice d19 d15 i==0) && (slice d31 d20 i==0x302) && (slice d14 d12 i==0) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d11 d7 0) . (setSlice d19 d15 0) . (setSlice d31 d20 0x302) . (setSlice d14 d12 0) . (setSlice d6 d2 0x1C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "dret" where inst i = if (slice d11 d7 i==0) && (slice d19 d15 i==0) && (slice d31 d20 i==0x7b2) && (slice d14 d12 i==0) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d11 d7 0) . (setSlice d19 d15 0) . (setSlice d31 d20 0x7b2) . (setSlice d14 d12 0) . (setSlice d6 d2 0x1C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "sfence.vma" where inst i = if (slice d11 d7 i==0) && (slice d31 d25 i==0x09) && (slice d14 d12 i==0) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d11 d7 0) . (setSlice d31 d25 0x09) . (setSlice d14 d12 0) . (setSlice d6 d2 0x1C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "wfi" where inst i = if (slice d11 d7 i==0) && (slice d19 d15 i==0) && (slice d31 d20 i==0x105) && (slice d14 d12 i==0) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d11 d7 0) . (setSlice d19 d15 0) . (setSlice d31 d20 0x105) . (setSlice d14 d12 0) . (setSlice d6 d2 0x1C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "csrrw" where inst i = if (slice d14 d12 i==1) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 1) . (setSlice d6 d2 0x1C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "csrrs" where inst i = if (slice d14 d12 i==2) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 2) . (setSlice d6 d2 0x1C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "csrrc" where inst i = if (slice d14 d12 i==3) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 3) . (setSlice d6 d2 0x1C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "csrrwi" where inst i = if (slice d14 d12 i==5) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 5) . (setSlice d6 d2 0x1C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "csrrsi" where inst i = if (slice d14 d12 i==6) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 6) . (setSlice d6 d2 0x1C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "csrrci" where inst i = if (slice d14 d12 i==7) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 7) . (setSlice d6 d2 0x1C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "hfence.vvma" where inst i = if (slice d11 d7 i==0) && (slice d31 d25 i==0x11) && (slice d14 d12 i==0) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d11 d7 0) . (setSlice d31 d25 0x11) . (setSlice d14 d12 0) . (setSlice d6 d2 0x1C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "hfence.gvma" where inst i = if (slice d11 d7 i==0) && (slice d31 d25 i==0x31) && (slice d14 d12 i==0) && (slice d6 d2 i==0x1C) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d11 d7 0) . (setSlice d31 d25 0x31) . (setSlice d14 d12 0) . (setSlice d6 d2 0x1C) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fadd.s" where inst i = if (slice d31 d27 i==0x00) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x00) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fsub.s" where inst i = if (slice d31 d27 i==0x01) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x01) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fmul.s" where inst i = if (slice d31 d27 i==0x02) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x02) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fdiv.s" where inst i = if (slice d31 d27 i==0x03) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x03) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fsgnj.s" where inst i = if (slice d31 d27 i==0x04) && (slice d14 d12 i==0) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x04) . (setSlice d14 d12 0) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fsgnjn.s" where inst i = if (slice d31 d27 i==0x04) && (slice d14 d12 i==1) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x04) . (setSlice d14 d12 1) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fsgnjx.s" where inst i = if (slice d31 d27 i==0x04) && (slice d14 d12 i==2) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x04) . (setSlice d14 d12 2) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fmin.s" where inst i = if (slice d31 d27 i==0x05) && (slice d14 d12 i==0) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x05) . (setSlice d14 d12 0) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fmax.s" where inst i = if (slice d31 d27 i==0x05) && (slice d14 d12 i==1) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x05) . (setSlice d14 d12 1) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fsqrt.s" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x0B) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d27 0x0B) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fadd.d" where inst i = if (slice d31 d27 i==0x00) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x00) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fsub.d" where inst i = if (slice d31 d27 i==0x01) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x01) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fmul.d" where inst i = if (slice d31 d27 i==0x02) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x02) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fdiv.d" where inst i = if (slice d31 d27 i==0x03) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x03) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fsgnj.d" where inst i = if (slice d31 d27 i==0x04) && (slice d14 d12 i==0) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x04) . (setSlice d14 d12 0) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fsgnjn.d" where inst i = if (slice d31 d27 i==0x04) && (slice d14 d12 i==1) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x04) . (setSlice d14 d12 1) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fsgnjx.d" where inst i = if (slice d31 d27 i==0x04) && (slice d14 d12 i==2) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x04) . (setSlice d14 d12 2) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fmin.d" where inst i = if (slice d31 d27 i==0x05) && (slice d14 d12 i==0) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x05) . (setSlice d14 d12 0) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fmax.d" where inst i = if (slice d31 d27 i==0x05) && (slice d14 d12 i==1) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x05) . (setSlice d14 d12 1) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.s.d" where inst i = if (slice d24 d20 i==1) && (slice d31 d27 i==0x08) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 1) . (setSlice d31 d27 0x08) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.d.s" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x08) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d27 0x08) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fsqrt.d" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x0B) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d27 0x0B) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fadd.q" where inst i = if (slice d31 d27 i==0x00) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x00) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fsub.q" where inst i = if (slice d31 d27 i==0x01) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x01) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fmul.q" where inst i = if (slice d31 d27 i==0x02) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x02) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fdiv.q" where inst i = if (slice d31 d27 i==0x03) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x03) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fsgnj.q" where inst i = if (slice d31 d27 i==0x04) && (slice d14 d12 i==0) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x04) . (setSlice d14 d12 0) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fsgnjn.q" where inst i = if (slice d31 d27 i==0x04) && (slice d14 d12 i==1) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x04) . (setSlice d14 d12 1) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fsgnjx.q" where inst i = if (slice d31 d27 i==0x04) && (slice d14 d12 i==2) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x04) . (setSlice d14 d12 2) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fmin.q" where inst i = if (slice d31 d27 i==0x05) && (slice d14 d12 i==0) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x05) . (setSlice d14 d12 0) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fmax.q" where inst i = if (slice d31 d27 i==0x05) && (slice d14 d12 i==1) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x05) . (setSlice d14 d12 1) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.s.q" where inst i = if (slice d24 d20 i==3) && (slice d31 d27 i==0x08) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 3) . (setSlice d31 d27 0x08) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.q.s" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x08) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d27 0x08) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.d.q" where inst i = if (slice d24 d20 i==3) && (slice d31 d27 i==0x08) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 3) . (setSlice d31 d27 0x08) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.q.d" where inst i = if (slice d24 d20 i==1) && (slice d31 d27 i==0x08) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 1) . (setSlice d31 d27 0x08) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fsqrt.q" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x0B) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d27 0x0B) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fle.s" where inst i = if (slice d31 d27 i==0x14) && (slice d14 d12 i==0) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x14) . (setSlice d14 d12 0) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "flt.s" where inst i = if (slice d31 d27 i==0x14) && (slice d14 d12 i==1) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x14) . (setSlice d14 d12 1) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "feq.s" where inst i = if (slice d31 d27 i==0x14) && (slice d14 d12 i==2) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x14) . (setSlice d14 d12 2) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fle.d" where inst i = if (slice d31 d27 i==0x14) && (slice d14 d12 i==0) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x14) . (setSlice d14 d12 0) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "flt.d" where inst i = if (slice d31 d27 i==0x14) && (slice d14 d12 i==1) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x14) . (setSlice d14 d12 1) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "feq.d" where inst i = if (slice d31 d27 i==0x14) && (slice d14 d12 i==2) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x14) . (setSlice d14 d12 2) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fle.q" where inst i = if (slice d31 d27 i==0x14) && (slice d14 d12 i==0) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x14) . (setSlice d14 d12 0) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "flt.q" where inst i = if (slice d31 d27 i==0x14) && (slice d14 d12 i==1) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x14) . (setSlice d14 d12 1) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "feq.q" where inst i = if (slice d31 d27 i==0x14) && (slice d14 d12 i==2) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d31 d27 0x14) . (setSlice d14 d12 2) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.w.s" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x18) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d27 0x18) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.wu.s" where inst i = if (slice d24 d20 i==1) && (slice d31 d27 i==0x18) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 1) . (setSlice d31 d27 0x18) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.l.s" where inst i = if (slice d24 d20 i==2) && (slice d31 d27 i==0x18) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 2) . (setSlice d31 d27 0x18) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.lu.s" where inst i = if (slice d24 d20 i==3) && (slice d31 d27 i==0x18) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 3) . (setSlice d31 d27 0x18) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fmv.x.w" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1C) && (slice d14 d12 i==0) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d27 0x1C) . (setSlice d14 d12 0) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fclass.s" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1C) && (slice d14 d12 i==1) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d27 0x1C) . (setSlice d14 d12 1) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.w.d" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x18) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d27 0x18) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.wu.d" where inst i = if (slice d24 d20 i==1) && (slice d31 d27 i==0x18) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 1) . (setSlice d31 d27 0x18) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.l.d" where inst i = if (slice d24 d20 i==2) && (slice d31 d27 i==0x18) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 2) . (setSlice d31 d27 0x18) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.lu.d" where inst i = if (slice d24 d20 i==3) && (slice d31 d27 i==0x18) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 3) . (setSlice d31 d27 0x18) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fmv.x.d" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1C) && (slice d14 d12 i==0) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d27 0x1C) . (setSlice d14 d12 0) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fclass.d" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1C) && (slice d14 d12 i==1) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d27 0x1C) . (setSlice d14 d12 1) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.w.q" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x18) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d27 0x18) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.wu.q" where inst i = if (slice d24 d20 i==1) && (slice d31 d27 i==0x18) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 1) . (setSlice d31 d27 0x18) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.l.q" where inst i = if (slice d24 d20 i==2) && (slice d31 d27 i==0x18) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 2) . (setSlice d31 d27 0x18) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.lu.q" where inst i = if (slice d24 d20 i==3) && (slice d31 d27 i==0x18) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 3) . (setSlice d31 d27 0x18) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fmv.x.q" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1C) && (slice d14 d12 i==0) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d27 0x1C) . (setSlice d14 d12 0) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fclass.q" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1C) && (slice d14 d12 i==1) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d27 0x1C) . (setSlice d14 d12 1) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.s.w" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d27 0x1A) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.s.wu" where inst i = if (slice d24 d20 i==1) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 1) . (setSlice d31 d27 0x1A) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.s.l" where inst i = if (slice d24 d20 i==2) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 2) . (setSlice d31 d27 0x1A) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.s.lu" where inst i = if (slice d24 d20 i==3) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 3) . (setSlice d31 d27 0x1A) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fmv.w.x" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1E) && (slice d14 d12 i==0) && (slice d26 d25 i==0) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d27 0x1E) . (setSlice d14 d12 0) . (setSlice d26 d25 0) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.d.w" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d27 0x1A) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.d.wu" where inst i = if (slice d24 d20 i==1) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 1) . (setSlice d31 d27 0x1A) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.d.l" where inst i = if (slice d24 d20 i==2) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 2) . (setSlice d31 d27 0x1A) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.d.lu" where inst i = if (slice d24 d20 i==3) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 3) . (setSlice d31 d27 0x1A) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fmv.d.x" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1E) && (slice d14 d12 i==0) && (slice d26 d25 i==1) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d27 0x1E) . (setSlice d14 d12 0) . (setSlice d26 d25 1) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.q.w" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d27 0x1A) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.q.wu" where inst i = if (slice d24 d20 i==1) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 1) . (setSlice d31 d27 0x1A) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.q.l" where inst i = if (slice d24 d20 i==2) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 2) . (setSlice d31 d27 0x1A) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fcvt.q.lu" where inst i = if (slice d24 d20 i==3) && (slice d31 d27 i==0x1A) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseFl i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 3) . (setSlice d31 d27 0x1A) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fmv.q.x" where inst i = if (slice d24 d20 i==0) && (slice d31 d27 i==0x1E) && (slice d14 d12 i==0) && (slice d26 d25 i==3) && (slice d6 d2 i==0x14) && (slice d1 d0 i==3) then Just $ parseR i else Nothing;encodeInst f = ((placeFields f) . (setSlice d24 d20 0) . (setSlice d31 d27 0x1E) . (setSlice d14 d12 0) . (setSlice d26 d25 3) . (setSlice d6 d2 0x14) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "flw" where inst i = if (slice d14 d12 i==2) && (slice d6 d2 i==0x01) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 2) . (setSlice d6 d2 0x01) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fld" where inst i = if (slice d14 d12 i==3) && (slice d6 d2 i==0x01) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 3) . (setSlice d6 d2 0x01) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "flq" where inst i = if (slice d14 d12 i==4) && (slice d6 d2 i==0x01) && (slice d1 d0 i==3) then Just $ parseI i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 4) . (setSlice d6 d2 0x01) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fsw" where inst i = if (slice d14 d12 i==2) && (slice d6 d2 i==0x09) && (slice d1 d0 i==3) then Just $ parseS i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 2) . (setSlice d6 d2 0x09) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fsd" where inst i = if (slice d14 d12 i==3) && (slice d6 d2 i==0x09) && (slice d1 d0 i==3) then Just $ parseS i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 3) . (setSlice d6 d2 0x09) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fsq" where inst i = if (slice d14 d12 i==4) && (slice d6 d2 i==0x09) && (slice d1 d0 i==3) then Just $ parseS i else Nothing;encodeInst f = ((placeFields f) . (setSlice d14 d12 4) . (setSlice d6 d2 0x09) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fmadd.s" where inst i = if (slice d26 d25 i==0) && (slice d6 d2 i==0x10) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing;encodeInst f = ((placeFields f) . (setSlice d26 d25 0) . (setSlice d6 d2 0x10) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fmsub.s" where inst i = if (slice d26 d25 i==0) && (slice d6 d2 i==0x11) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing;encodeInst f = ((placeFields f) . (setSlice d26 d25 0) . (setSlice d6 d2 0x11) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fnmsub.s" where inst i = if (slice d26 d25 i==0) && (slice d6 d2 i==0x12) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing;encodeInst f = ((placeFields f) . (setSlice d26 d25 0) . (setSlice d6 d2 0x12) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fnmadd.s" where inst i = if (slice d26 d25 i==0) && (slice d6 d2 i==0x13) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing;encodeInst f = ((placeFields f) . (setSlice d26 d25 0) . (setSlice d6 d2 0x13) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fmadd.d" where inst i = if (slice d26 d25 i==1) && (slice d6 d2 i==0x10) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing;encodeInst f = ((placeFields f) . (setSlice d26 d25 1) . (setSlice d6 d2 0x10) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fmsub.d" where inst i = if (slice d26 d25 i==1) && (slice d6 d2 i==0x11) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing;encodeInst f = ((placeFields f) . (setSlice d26 d25 1) . (setSlice d6 d2 0x11) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fnmsub.d" where inst i = if (slice d26 d25 i==1) && (slice d6 d2 i==0x12) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing;encodeInst f = ((placeFields f) . (setSlice d26 d25 1) . (setSlice d6 d2 0x12) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fnmadd.d" where inst i = if (slice d26 d25 i==1) && (slice d6 d2 i==0x13) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing;encodeInst f = ((placeFields f) . (setSlice d26 d25 1) . (setSlice d6 d2 0x13) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fmadd.q" where inst i = if (slice d26 d25 i==3) && (slice d6 d2 i==0x10) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing;encodeInst f = ((placeFields f) . (setSlice d26 d25 3) . (setSlice d6 d2 0x10) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fmsub.q" where inst i = if (slice d26 d25 i==3) && (slice d6 d2 i==0x11) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing;encodeInst f = ((placeFields f) . (setSlice d26 d25 3) . (setSlice d6 d2 0x11) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fnmsub.q" where inst i = if (slice d26 d25 i==3) && (slice d6 d2 i==0x12) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing;encodeInst f = ((placeFields f) . (setSlice d26 d25 3) . (setSlice d6 d2 0x12) . (setSlice d1 d0 3)) 0
+instance InstructionMatch "fnmadd.q" where inst i = if (slice d26 d25 i==3) && (slice d6 d2 i==0x13) && (slice d1 d0 i==3) then Just $ parseR4 i else Nothing;encodeInst f = ((placeFields f) . (setSlice d26 d25 3) . (setSlice d6 d2 0x13) . (setSlice d1 d0 3)) 0
 instance InstructionMatch16 "c.addi4spn" where inst16 i = (slice d1 d0 i==0) && (slice d15 d13 i==0) 
 instance InstructionMatch16 "c.fld" where inst16 i = (slice d1 d0 i==0) && (slice d15 d13 i==1) 
 instance InstructionMatch16 "c.lw" where inst16 i = (slice d1 d0 i==0) && (slice d15 d13 i==2) 
