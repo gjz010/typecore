@@ -56,7 +56,7 @@ module RiscVOpcodesParser where
             fin = "cause _ = UnknownCause"
     header :: String
     header =[r|-- This file is generated automatically.
-{-# LANGUAGE AllowAmbiguousTypes, NamedFieldPuns, RankNTypes #-}
+{-# LANGUAGE AllowAmbiguousTypes, NamedFieldPuns, RankNTypes, FunctionalDependencies #-}
 module RISCV where
 import Clash.Prelude
 import Control.Lens
@@ -78,7 +78,31 @@ data InstructionParam = R {rs1 :: RegIndex, rs2 :: RegIndex, rd :: RegIndex}
                     |   Fc {pred :: FenceArg, succ :: FenceArg}
                     deriving Show
 
+data TyR = TyR {r_rs1 :: RegIndex, r_rs2 :: RegIndex, r_rd :: RegIndex}
+data TyI = TyI {i_rs1 :: RegIndex, i_imm :: Immediate, i_rd :: RegIndex}
+data TyS = TyS {s_rs1 :: RegIndex, s_rs2 :: RegIndex, s_imm :: Immediate}
+data TyB = TyB {b_rs1 :: RegIndex, b_rs2 :: RegIndex, b_imm :: Immediate}
+data TyU = TyU {u_imm :: Immediate, u_rd :: RegIndex}
+data TyJ = TyJ {j_imm :: Immediate, j_rd :: RegIndex}
+data TyAt = TyAt {at_aq :: Bit, at_rl :: Bit, at_rs1 :: RegIndex, at_rs2 :: RegIndex, at_rd :: RegIndex}
+data TyFl = TyFl {fl_rs1 :: RegIndex, fl_rs2 :: RegIndex, fl_rd :: RegIndex, fl_rm :: RoundMode}
+data TySh = TySh {sh_rs1 :: RegIndex, sh_rd :: RegIndex, sh_shamt :: Shamt}
+data TyR4 = TyR4 {r4_rs1 :: RegIndex, r4_rs2 :: RegIndex, r4_rs3 :: RegIndex, r4_rd :: RegIndex, r4_rm :: RoundMode}
+data TyFc = TyFc {fc_pred :: FenceArg, fc_succ :: FenceArg}
 
+class TyParam a where
+    toSumParam :: a->InstructionParam
+instance TyParam TyR where toSumParam (TyR a b c) = R a b c
+instance TyParam TyI where toSumParam (TyI a b c) = I a b c
+instance TyParam TyS where toSumParam (TyS a b c) = S a b c
+instance TyParam TyB where toSumParam (TyB a b c) = B a b c
+instance TyParam TyU where toSumParam (TyU a b) = U a b
+instance TyParam TyJ where toSumParam (TyJ a b) = J a b
+instance TyParam TyAt where toSumParam (TyAt a b c d e) = At a b c d e
+instance TyParam TyFl where toSumParam (TyFl a b c d) = Fl a b c d
+instance TyParam TySh where toSumParam (TySh a b c) = Sh a b c
+instance TyParam TyR4 where toSumParam (TyR4 a b c d e) = R4 a b c d e
+instance TyParam TyFc where toSumParam (TyFc a b) = Fc a b
 
 sliceLens a b = lens (slice a b) (flip (setSlice a b))
 
@@ -194,7 +218,8 @@ flattenInstructionParam Fc {RISCV.pred, RISCV.succ}= dontCareParam {f_pred=pred,
 
 class InstructionMatch (s::Symbol) where
     inst :: BitVector 32->Maybe InstructionParam
-    encodeInst :: InstructionParam->BitVector 32
+class InstructionGen (s::Symbol) t | s->t where
+    encodeInst :: t->BitVector 32
 
 class InstructionMatch16 (s::Symbol) where
     inst16 :: BitVector 16->Bool
@@ -234,13 +259,14 @@ class InstructionMatch16 (s::Symbol) where
     isRVC _ = False
     matchInsn :: [String]->String
     matchInsn args@(isRVC . head -> True) = "instance InstructionMatch16 \""++(head args)++"\" where inst16 i = ("++(intercalate ") && (" $ getBitPattern args)++") "
-    matchInsn args = "instance InstructionMatch \""++(head args)++"\" where inst i = if ("++(intercalate ") && (" $ getBitPattern args)++") then Just $ parse"++(show $ checkType args)++" i else Nothing;"
-                    ++ ("encodeInst f = ((placeFields f) . (" ++(intercalate ") . (" $ getBitSetter args) ++")) 0")
+    matchInsn args = "instance InstructionMatch \""++(head args)++"\" where inst i = if ("++(intercalate ") && (" $ getBitPattern args)++") then Just $ parse"++(show $ checkType args)++" i else Nothing\n"
+                    ++ ("instance InstructionGen \""++(head args)++"\" Ty"++(show $ checkType args)++" where encodeInst f = ((placeFields (toSumParam f)) . (" ++(intercalate ") . (" $ getBitSetter args) ++")) 0")
                     
-    
+    registerDecls :: String
+    registerDecls = concatMap (\x->"reg_x"++(show x)++" :: RegIndex\nreg_x"++(show x)++" = "++(show x)++"\n") [0..31]
 
     riscv :: [[String]]->String
-    riscv opcodes= intercalate "\n" $ [header, causeChecker causes, intercalate "\n" $ map fieldExtractor bitfields] ++ (map matchInsn opcodes)
+    riscv opcodes= intercalate "\n" $ [header, registerDecls, causeChecker causes, intercalate "\n" $ map fieldExtractor bitfields] ++ (map matchInsn opcodes)
     main :: IO ()
     main = do
         input<-getContents
