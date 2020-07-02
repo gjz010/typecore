@@ -12,7 +12,7 @@ checkType v = if v .&. 3 /= 3 then RV16 (truncateB v) else (if v .&. 31 /= 31 th
 
 decodeInstruction :: BitVector 32-> UncompressResult
 decodeInstruction (checkType->RV32 x) = Full x
-decodeInstruction (checkType->RV16 x) = BadInstruction
+decodeInstruction (checkType->RV16 x) = case expandInstruction x of {Just y->Compressed y; Nothing->BadInstruction}
 decodeInstruction (checkType->UnknownType) = BadInstruction
 
 
@@ -73,9 +73,7 @@ expandInstruction i@(inst16 @"c.subw"->True) = Just (encodeInst @"subw" (TyR {r_
 -- Illegal Instruction
 expandInstruction ((==0) -> True) = Nothing
 
-
-
-
 expandInstruction _ = Nothing
+
 
 
